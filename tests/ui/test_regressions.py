@@ -1,46 +1,33 @@
 """针对已修复问题的回归测试。
 
-覆盖三个真实 bug：
+覆盖几个真实 bug：
 
 1. 鼠标划过侧栏分组标题就疯狂折叠/展开（连同里面的下拉菜单一起抖动）；
 2. AI 结果已返回、落子停顿未过时主循环每帧重开搜索 → "思考中"闪烁且 AI 不落子；
-3. 窗口尺寸不裁剪到屏幕 → 小屏/高 DPI 下底部按钮被裁掉。
+3. 窗口尺寸不裁剪到屏幕 → 小屏/高 DPI 下底部按钮被裁掉；
+4. 滑块在不按左键时也跟着鼠标动（在侧栏外松手导致拖拽态卡死）。
 """
 
 from __future__ import annotations
 
-import os
 import time
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+import pygame
+from helpers import (
+    motion as _motion,
+)
+from helpers import (
+    press as _press,
+)
+from helpers import (
+    release as _release,
+)
+from helpers import (
+    visible_slider as _visible_slider,
+)
 
-import pygame  # noqa: E402
-import pytest  # noqa: E402
-
-from boardgames.app import build_registry  # noqa: E402
-from boardgames.settings import Settings  # noqa: E402
-from boardgames.ui import theme  # noqa: E402
-from boardgames.ui.window import GameWindow, choose_window_size  # noqa: E402
-
-
-@pytest.fixture
-def make_window(tmp_path):
-    created: list[GameWindow] = []
-
-    def _make(**overrides) -> GameWindow:
-        settings = Settings(tmp_path / "settings.json")
-        for key, value in overrides.items():
-            settings.values[key] = value
-        window = GameWindow(settings, build_registry(), headless=True)
-        created.append(window)
-        return window
-
-    yield _make
-    for _window in created:
-        if pygame.get_init():
-            pygame.quit()
-
+from boardgames.ui import theme
+from boardgames.ui.window import choose_window_size
 
 # --------------------------------------------------------------------------- #
 # 1. 分组标题：只有左键点击才折叠/展开
@@ -234,38 +221,6 @@ def test_sidebar_narrows_on_small_windows(make_window):
 # --------------------------------------------------------------------------- #
 # 4. 滑块只有按住左键拖动时才跟随鼠标
 # --------------------------------------------------------------------------- #
-
-def _find_widget(sidebar, key):
-    for section in sidebar.sections:
-        for widget in section.widgets:
-            if widget.key == key:
-                return widget
-    return None
-
-
-def _visible_slider(window, key: str):
-    """滚动到该滑块可见为止（事件只在可见区域内派发）。"""
-    sidebar = window.sidebar
-    for _ in range(40):
-        window._update(16.0)
-        widget = _find_widget(sidebar, key)
-        if widget is not None and widget.visible and sidebar.viewport.colliderect(widget.rect):
-            return widget
-        sidebar._scroll_by(60)
-    raise AssertionError(f"找不到可见的滑块: {key}")
-
-
-def _motion(pos):
-    return pygame.event.Event(pygame.MOUSEMOTION, {"pos": pos, "rel": (0, 0), "buttons": (0, 0, 0)})
-
-
-def _press(pos, button=1):
-    return pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": pos, "button": button})
-
-
-def _release(pos, button=1):
-    return pygame.event.Event(pygame.MOUSEBUTTONUP, {"pos": pos, "button": button})
-
 
 def test_slider_does_not_follow_hover(make_window):
     """回归：不按键时鼠标划过滑块，数值不能变。"""

@@ -236,7 +236,9 @@ class GameWindow:
                 self.screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
                 self._layout()
             elif event.type == pygame.KEYDOWN:
-                self._handle_key(event)
+                # 侧栏有输入框在编辑时，键盘先给它（避免 Esc/字母 误触发快捷键）
+                if not self.sidebar.handle_key(event):
+                    self._handle_key(event)
             else:
                 self._handle_pointer(event)
 

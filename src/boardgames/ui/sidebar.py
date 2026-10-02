@@ -34,9 +34,16 @@ from boardgames.ui.animation import pulse
 from boardgames.ui.fonts import FontBook
 from boardgames.ui.widgets import Button, Dropdown, Segmented, Slider, Toggle, Widget
 
-HEADER_H = 122
+HEADER_H = 178
 FOOTER_H = 64
 SCROLL_STEP = 56
+
+# 头部各元素的纵向位置（相对面板顶部）
+TITLE_Y = 12
+SUBTITLE_Y = 44
+MODE_Y = 64
+PLAYERS_Y = 112
+PLAYER_ROW_H = 26
 
 
 @dataclass
@@ -91,6 +98,8 @@ class Sidebar:
         self._header_rects: dict[str, pygame.Rect] = {}
         self._players_rect: pygame.Rect | None = None
         self._thinking_rect: pygame.Rect | None = None
+        #: 当前正在接受键盘输入的数值框
+        self._editing: Slider | None = None
         self._build()
 
     # ------------------------------------------------------------------ #
@@ -142,13 +151,13 @@ class Sidebar:
             return Slider(
                 spec.key, spec.label, value,
                 spec.minimum or 0, spec.maximum or 0, spec.step or 1,
-                self.on_setting, fmt=lambda v: str(int(round(v))),
+                self.on_setting, fmt=lambda v: str(int(round(v))), on_edit=self._begin_edit,
             )
         if spec.kind == "float":
             return Slider(
                 spec.key, spec.label, value,
                 spec.minimum or 0, spec.maximum or 0, spec.step or 0.01,
-                self.on_setting, fmt=lambda v: f"{v:g}",
+                self.on_setting, fmt=lambda v: f"{v:g}", on_edit=self._begin_edit,
             )
         if spec.kind == "choice":
             return Dropdown(spec.key, spec.label, value, spec.choices, self.on_setting, labels=labels)
@@ -160,6 +169,40 @@ class Sidebar:
                 widget.set_value_silently(self.settings.get(widget.key))
         if self._mode_widget is not None:
             self._mode_widget.set_value_silently(self.settings.get("mode"))
+
+    # ------------------------------------------------------------------ #
+    # 数值输入框
+    # ------------------------------------------------------------------ #
+
+    def _begin_edit(self, widget: Slider) -> None:
+        """某个数值框获得焦点；同时只允许一个在编辑。"""
+        if self._editing is not None and self._editing is not widget:
+            self._editing.commit_edit()
+        self._editing = widget
+
+    def _end_editing(self, commit: bool = True) -> None:
+        widget = self._editing
+        self._editing = None
+        if widget is None:
+            return
+        if commit:
+            widget.commit_edit()
+        else:
+            widget.cancel_edit()
+
+    def handle_key(self, event: pygame.event.Event) -> bool:
+        """键盘事件优先给正在编辑的数值框；返回 True 表示已消费。
+
+        返回 True 时主窗口不再处理该按键 —— 否则输入 "4" 之类虽然没冲突，
+        但 Esc / 字母键会误触发退出、新局、悔棋等快捷键。
+        """
+        widget = self._editing
+        if widget is None:
+            return False
+        widget.handle_key(event)
+        if not widget.editing:
+            self._editing = None
+        return True
 
     # ------------------------------------------------------------------ #
     # 按模式精简：哪些分组 / 参数当前有意义
@@ -229,6 +272,13 @@ class Sidebar:
         self.rect = pygame.Rect(rect)
         self._content_x = rect.x + theme.PADDING
         self._content_w = rect.width - theme.PADDING * 2
+        #: 双方信息固定在头部，不随滚动移动/隐藏
+        self._players_rect = pygame.Rect(
+            self._content_x,
+            rect.y + PLAYERS_Y,
+            self._content_w,
+            PLAYER_ROW_H * 2,
+        )
         if self._mode_widget is not None:
             self._mode_widget.layout(self._header_mode_rect())
 
@@ -248,24 +298,18 @@ class Sidebar:
         raise KeyError(group_id)
 
     def _flow(self) -> list[tuple[str, str]]:
-        """内容流的块序列。"""
+        """滚动区的内容流（双方信息已固定在头部，不在这里）。"""
         flow: list[tuple[str, str]] = []
-        players = self._section("players")
-        if self._section_active(players) and self._section_widgets(players):
-            flow.append(("section", "players"))
-        flow.append(("players_info", ""))
         if self._show_thinking_row():
             flow.append(("thinking", ""))
         for section in self._active_sections():
-            if section.group_id != "players":
-                flow.append(("section", section.group_id))
+            flow.append(("section", section.group_id))
         return flow
 
     def _layout_content(self) -> None:
         top = self.viewport.y - int(self.scroll) + 10
         y = top
         self._header_rects.clear()
-        self._players_rect = None
         self._thinking_rect = None
 
         for kind, gid in self._flow():
@@ -283,9 +327,6 @@ class Sidebar:
                         widget.visible = False
                         widget.layout(pygame.Rect(0, -9000, 0, 0))
                 y += 8
-            elif kind == "players_info":
-                self._players_rect = pygame.Rect(self._content_x, y, self._content_w, 54)
-                y += 60
             else:
                 self._thinking_rect = pygame.Rect(self._content_x, y, self._content_w, 34)
                 y += 44
@@ -328,6 +369,16 @@ class Sidebar:
             self._scroll_by(-SCROLL_STEP if event.button == 4 else SCROLL_STEP)
             return True
 
+        # ---- 正在输入数值：点别处就确认并结束 ----
+        if (
+            self._editing is not None
+            and event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and not self._editing.value_box.collidepoint(event.pos)
+        ):
+            self._end_editing(commit=True)
+            return True
+
         # ---- 展开中的下拉优先接管（点其它地方 = 收起） ----
         for dropdown in self._open_dropdowns():
             if dropdown.handle_event(event):
@@ -365,6 +416,9 @@ class Sidebar:
     def update(self, dt_ms: float, mouse: tuple[int, int]) -> None:
         self._time += dt_ms / 1000.0
         self._layout_content()
+        # 正在编辑的输入框被折叠 / 精简掉时，直接确认收工
+        if self._editing is not None and not self._editing.visible:
+            self._end_editing(commit=True)
         viewport = self.viewport
         inside = viewport.collidepoint(mouse)
         for widget in self._visible_widgets():
@@ -389,7 +443,7 @@ class Sidebar:
     # ------------------------------------------------------------------ #
 
     def _header_mode_rect(self) -> pygame.Rect:
-        return pygame.Rect(self._content_x, self.rect.y + 78, self._content_w, 36)
+        return pygame.Rect(self._content_x, self.rect.y + MODE_Y, self._content_w, 36)
 
     def draw(self, surface: pygame.Surface, fonts: FontBook) -> None:
         render.panel(surface, self.rect, color=theme.BG_ALT, radius=0, border=None, shadow=False)
@@ -401,13 +455,15 @@ class Sidebar:
         self._draw_dropdown_overlays(surface, fonts)
 
     def _draw_header(self, surface: pygame.Surface, fonts: FontBook) -> None:
-        render.text(surface, fonts.get(20, bold=True), "步步为营", (self._content_x, self.rect.y + 14),
-                    theme.TEXT)
+        render.text(surface, fonts.get(20, bold=True), "步步为营",
+                    (self._content_x, self.rect.y + TITLE_Y), theme.TEXT)
+        render.text(surface, fonts.get(12), "Quoridor · 墙棋",
+                    (self._content_x, self.rect.y + SUBTITLE_Y), theme.TEXT_FAINT)
         self._draw_turn(surface, fonts)
-        render.text(surface, fonts.get(12), "Quoridor · 墙棋", (self._content_x, self.rect.y + 48),
-                    theme.TEXT_FAINT)
         if self._mode_widget is not None:
             self._mode_widget.draw(surface, fonts)
+        # 双方信息固定在头部：永远可见，不会被滚动带走
+        self._draw_players(surface, fonts)
         pygame.draw.line(
             surface, theme.BORDER_SOFT,
             (self.rect.x + 12, self.rect.y + HEADER_H - 6),
@@ -431,7 +487,8 @@ class Sidebar:
                 text = f"{name} 思考中{dots}"
             else:
                 text = f"轮到 {name}"
-        render.text(surface, fonts.get(14), text, (self.rect.right - theme.PADDING, self.rect.y + 44),
+        render.text(surface, fonts.get(14), text,
+                    (self.rect.right - theme.PADDING, self.rect.y + SUBTITLE_Y + 2),
                     color, align="right")
 
     def _draw_content(self, surface: pygame.Surface, fonts: FontBook) -> None:
@@ -457,21 +514,19 @@ class Sidebar:
                 continue
             widget.draw(surface, fonts)
 
-        self._draw_players(surface, fonts, viewport)
         self._draw_thinking(surface, fonts, viewport)
 
         surface.set_clip(previous_clip)
         self._draw_scrollbar(surface, viewport)
 
-    def _draw_players(self, surface: pygame.Surface, fonts: FontBook, viewport: pygame.Rect) -> None:
+    def _draw_players(self, surface: pygame.Surface, fonts: FontBook) -> None:
+        """双方信息（固定在头部，不参与滚动）。"""
         rect = self._players_rect
-        if rect is None or not rect.colliderect(viewport):
+        if rect is None:
             return
         status = self.status
         for player in (0, 1):
-            row = pygame.Rect(rect.x, rect.y + player * 26, rect.width, 24)
-            if not row.colliderect(viewport):
-                continue
+            row = pygame.Rect(rect.x, rect.y + player * PLAYER_ROW_H, rect.width, PLAYER_ROW_H - 2)
             color = theme.PLAYER_COLORS[player]
             pygame.draw.circle(surface, color, (row.x + 8, row.centery), 6)
             if status.current_player == player and not status.is_over:

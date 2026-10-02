@@ -6,12 +6,16 @@
 
 ```bash
 uv sync && uv run boardgames     # 启动
-uv run pytest                    # 测试（124 项）
+uv run pytest                    # 测试（138 项）
 uv run ruff check src tests scripts
 uv run python scripts/benchmark_ai.py
 uv run boardgames --headless --screenshot out.png --demo 20   # 无头截图（SDL dummy）
 uv run boardgames --window 1000x640                           # 强制窗口尺寸调试布局
+uv run boardgames --hover wall-h                              # 截图时模拟悬停（放墙/走子预览）
 ```
+
+UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests/ui/helpers.py`
+（模拟鼠标/键盘），新加 UI 测试直接 `from helpers import ...` 即可。
 
 版本管理：git（分支 `master`）。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/`
 已忽略；`.workbuddy/memory/` 纳入版本控制。
@@ -83,18 +87,31 @@ uv run boardgames --window 1000x640                           # 强制窗口尺�
 
 - **全程鼠标，没有"放墙模式"**。`ViewState` 不带 `placing`，朝向也不是用户设置项。
 - 判定在 `QuoridorView._intent()`：取鼠标分数坐标到最近网格线的距离，
-  `min(dist_v, dist_h) <= EDGE_ZONE(0.26)` → 放墙（朝向取更近的那条线；在交点附近
-  两者都近时优先给**能放**的朝向），否则 → 走子。
+  令 `dv`/`dh` 分别为到竖直/水平网格线的距离，则
+  - `min(dv,dh) <= EDGE_ZONE(0.26)` 且 `max(dv,dh) > CORNER_ZONE(0.14)` → 放墙
+    （朝向 = 更近的那条线，`h` 或 `v`）；
+  - **两者都 <= CORNER_ZONE（四个格子的公共交点）→ 不提示** —— 那里横竖说不清，
+    猜来猜去会让预览随鼠标抖动；
+  - 否则 → 走子。
 - 只有**内部**网格交点能放墙（外框上没有墙槽）。
+- **刚放下的墙不重复提示**：`_just_placed_wall` + `JUST_PLACED_RADIUS(0.75 格)`，
+  鼠标离开这个范围才恢复提示。
 - 兜底：该位置放不下墙、而底下格子是合法落点时，点击退化为走子。
 - 落子/悔棋/新局后局面对象会变，`draw()` 里检测 `_intent_state is not state` 重算悬停意图，
   否则幽灵墙预览会停留在过期位置。
 
-## 侧栏按模式精简
+## 侧栏按模式精简 + 数值输入
 
-`ParamSpec` 有 `needs_ai` / `needs_engine` 两个可见性条件；`Sidebar` 从
-`status.player_types` 解析"实际参战引擎集合"，据此过滤分组与单个参数。
-新增参数时记得标好归属，否则会在不该出现的模式下露出来。
+- `ParamSpec` 有 `needs_ai` / `needs_engine` 两个可见性条件；`Sidebar` 从
+  `status.player_types` 解析"实际参战引擎集合"，据此过滤分组与单个参数。
+  新增参数时记得标好归属，否则会在不该出现的模式下露出来。
+- **双方信息固定在头部**（`PLAYERS_Y`），不参与滚动 —— 侧栏滚动区只放参数。
+  `HEADER_H = 178`，改头部高度时记得同步 `theme.MIN_WINDOW_H` 的可用性。
+- **数值参数可点击输入**：`Slider.value_box` 是右侧的数值框，点它进入编辑态；
+  `Sidebar.handle_key()` 在编辑时**接管所有键盘事件**并返回 True，
+  否则 Esc / N / U 会误触发退出、新局、悔棋。
+  `Sidebar._editing` 保证同时只有一个在编辑，点其他地方 = 确认。
+
 
 ## 用户偏好（本次交互确认）
 

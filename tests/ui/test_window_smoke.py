@@ -5,37 +5,14 @@
 
 from __future__ import annotations
 
-import os
+import time
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+import pygame
+from helpers import key_event as _key  # noqa: F401  (供后续用例使用)
+from helpers import motion as _motion  # noqa: F401
+from helpers import pos_for as _pos_for
 
-import time  # noqa: E402
-
-import pygame  # noqa: E402
-import pytest  # noqa: E402
-
-from boardgames.app import build_registry  # noqa: E402
-from boardgames.settings import Settings  # noqa: E402
-from boardgames.ui.window import GameWindow  # noqa: E402
-
-
-@pytest.fixture
-def make_window(tmp_path):
-    created: list[GameWindow] = []
-
-    def _make(**overrides) -> GameWindow:
-        settings = Settings(tmp_path / "settings.json")
-        for key, value in overrides.items():
-            settings.values[key] = value
-        window = GameWindow(settings, build_registry(), headless=True)
-        created.append(window)
-        return window
-
-    yield _make
-    for _window in created:
-        if pygame.get_init():
-            pygame.quit()
+from boardgames.settings import Settings
 
 
 def test_window_runs_without_error(make_window):
@@ -65,13 +42,6 @@ def test_click_outside_targets_is_ignored(make_window):
     pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": pos, "button": 1}))
     window._handle_events()
     assert len(session.history) == 1
-
-
-def _pos_for(window, fx: float, fy: float) -> tuple[int, int]:
-    """把"格坐标"（可以是小数）换算成像素坐标。"""
-    origin_x, origin_y = window.view.origin
-    cell = window.view.cell
-    return (int(origin_x + fx * cell), int(origin_y + fy * cell))
 
 
 def test_hover_near_horizontal_edge_previews_horizontal_wall(make_window):

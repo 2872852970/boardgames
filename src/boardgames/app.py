@@ -154,6 +154,9 @@ def _simulate_hover(window, mode: str) -> None:
         if not walls:
             return
         pos = view.anchor_center(walls[len(walls) // 2].wall)
+        # 网格交点本身不提示放墙（横竖说不清），沿这条边挪开一点才落在提示区
+        offset = max(1, int(view.cell * 0.4))
+        pos = (pos[0] + offset, pos[1]) if orient == "h" else (pos[0], pos[1] + offset)
     window.view_state.mouse = pos
     view.handle_motion(pos, session.game, state, window.view_state)
 

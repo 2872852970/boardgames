@@ -28,8 +28,11 @@ from boardgames.ui.fonts import FontBook
 
 #: 鼠标离网格线多近算"在格子边缘"（单位：格；0.5 就是半个格子）
 EDGE_ZONE = 0.26
-#: 到两条网格线的距离差小于这个值时，优先给**能放**的那一种朝向
-ORIENTATION_TIE = 0.10
+#: 鼠标离网格**交点**（四个格子的公共点）这么近时不给放墙提示。
+#: 交点上横竖两种都说得通，猜来猜去就会随鼠标抖动，所以干脆不提示。
+CORNER_ZONE = 0.14
+#: 刚放下的那面墙，鼠标还停在这个范围内就不再提示（避免"刚放完又提示能放"）
+JUST_PLACED_RADIUS = 0.75
 
 
 def _round_half_up(value: float) -> int:
@@ -70,6 +73,8 @@ class QuoridorView:
         self._hover_target: tuple[int, int] | None = None
         self._hover_kind = "none"
         self._intent_state: QuoridorState | None = None
+        #: 刚放下的墙：鼠标还停在这附近时不重复提示
+        self._just_placed_wall: Wall | None = None
         # 走子落点缓存
         self._cache_state: QuoridorState | None = None
         self._pawn_targets: set[tuple[int, int]] = set()
@@ -164,24 +169,19 @@ class QuoridorView:
         dist_v = abs(fx - line_x)  # 到竖直网格线的距离
         dist_h = abs(fy - line_y)  # 到水平网格线的距离
 
-        # 只有**内部**网格交点附近才能放墙（棋盘外框上没有墙槽）
+        # 只有**内部**网格交点附近才能放墙（棋盘外框上没有墙槽）；
+        # 而且必须**贴着其中一条线**：正卡在交点上时横竖说不清，干脆不提示。
         interior = 1 <= line_x <= size - 1 and 1 <= line_y <= size - 1
-        if interior and min(dist_v, dist_h) <= EDGE_ZONE:
-            ax, ay = line_x - 1, line_y - 1
-            wall_h = (HORIZONTAL, ax, ay)
-            wall_v = (VERTICAL, ax, ay)
-            if dist_h <= dist_v:
-                first, second = wall_h, wall_v
-            else:
-                first, second = wall_v, wall_h
-            first_legal = game.is_wall_legal(state, state.current_player, first)
-            second_legal = game.is_wall_legal(state, state.current_player, second)
-            # 离两条线一样近（角落）时，优先给出能放的那一种
-            if first_legal or not second_legal or abs(dist_h - dist_v) > ORIENTATION_TIE:
-                chosen, legal = first, first_legal
-            else:
-                chosen, legal = second, second_legal
-            return _Intent("wall", self.cell_at(pos), chosen, legal)
+        near_line = min(dist_v, dist_h) <= EDGE_ZONE
+        at_corner = max(dist_v, dist_h) <= CORNER_ZONE
+        if interior and near_line and not at_corner:
+            orient = HORIZONTAL if dist_h <= dist_v else VERTICAL
+            wall = (orient, line_x - 1, line_y - 1)
+            if wall != self._just_placed_wall:
+                legal = game.is_wall_legal(state, state.current_player, wall)
+                return _Intent("wall", self.cell_at(pos), wall, legal)
+            # 刚放下的那面墙：不再重复提示
+            return _Intent("none")
 
         cell = self.cell_at(pos)
         if cell is None:
@@ -209,6 +209,12 @@ class QuoridorView:
 
     def handle_motion(self, pos, game, state, view: ViewState) -> None:
         view.mouse = pos
+        # 鼠标离开刚放下的那面墙附近后，恢复正常提示
+        if self._just_placed_wall is not None:
+            cx, cy = self.anchor_center(self._just_placed_wall)
+            reach = self.cell * JUST_PLACED_RADIUS
+            if abs(pos[0] - cx) > reach or abs(pos[1] - cy) > reach:
+                self._just_placed_wall = None
         self._refresh_intent(pos, game, state, view)
 
     def handle_click(self, pos, game, state, view: ViewState) -> Move | None:
@@ -220,6 +226,8 @@ class QuoridorView:
 
         if intent.kind == "wall" and intent.wall is not None:
             if intent.legal:
+                # 记下来：鼠标不挪开就不再对这个位置给提示
+                self._just_placed_wall = intent.wall
                 return WallMove(*intent.wall)
             # 该位置放不了墙时，退一步：鼠标底下的格子若是合法落点就走子
             if intent.cell is not None and intent.cell in targets:
@@ -283,6 +291,7 @@ class QuoridorView:
         self._hover_legal = False
         self._cache_state = None
         self._intent_state = None
+        self._just_placed_wall = None
         self._last_move = None
 
     def set_last_move(self, move: Move | None) -> None:

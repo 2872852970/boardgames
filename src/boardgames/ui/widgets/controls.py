@@ -102,6 +102,11 @@ class Button(Widget):
 # --------------------------------------------------------------------------- #
 
 class Slider(ValueWidget):
+    """带可编辑数值框的滑块。
+
+    拖动滑轨调节，或**点击右侧数值框直接键入**数值（回车确认 / Esc 取消）。
+    """
+
     def __init__(
         self,
         key: str,
@@ -113,13 +118,21 @@ class Slider(ValueWidget):
         on_change: Callable[[str, Any], None] | None = None,
         *,
         fmt: Callable[[float], str] = _fmt_number,
+        on_edit: Callable[[Slider], None] | None = None,
     ) -> None:
         super().__init__(key, label, float(value), on_change)
         self.minimum = float(minimum)
         self.maximum = float(maximum)
         self.step = float(step) if step else 0.0
         self.fmt = fmt
+        self.on_edit = on_edit
+        self.editing = False
+        self._buffer = ""
         self._dragging = False
+        self._box_hovered = False
+        self._caret_t = 0.0
+        #: 整数参数不允许输入小数点
+        self._decimal = bool(self.step) and float(self.step) != int(self.step)
 
     @property
     def height(self) -> int:
@@ -127,8 +140,13 @@ class Slider(ValueWidget):
 
     @property
     def _track(self) -> pygame.Rect:
-        track = pygame.Rect(self.rect.x, self.rect.y + 32, self.rect.width, 6)
-        return track
+        return pygame.Rect(self.rect.x, self.rect.y + 32, self.rect.width, 6)
+
+    @property
+    def value_box(self) -> pygame.Rect:
+        """可点击输入的数值框区域。"""
+        width = 80
+        return pygame.Rect(self.rect.right - width, self.rect.y - 1, width, 24)
 
     def _knob_x(self) -> int:
         span = max(1.0, self.maximum - self.minimum)
@@ -142,10 +160,70 @@ class Slider(ValueWidget):
             raw = self.minimum + round((raw - self.minimum) / self.step) * self.step
         return max(self.minimum, min(self.maximum, raw))
 
+    # ---- 直接输入数值 ----
+
+    def begin_edit(self) -> None:
+        self.editing = True
+        self._buffer = self.fmt(self.value)
+        self._dragging = False
+        if self.on_edit is not None:
+            self.on_edit(self)
+
+    def cancel_edit(self) -> None:
+        self.editing = False
+        self._buffer = ""
+
+    def commit_edit(self) -> None:
+        text = self._buffer.strip()
+        self.editing = False
+        self._buffer = ""
+        if not text or text in {"-", ".", "-."}:
+            return
+        try:
+            raw = float(text)
+        except ValueError:
+            return
+        # 手动输入只做范围裁剪，不按步长取整（否则输入 8 会被吸到 7 这类意外）
+        self.value = max(self.minimum, min(self.maximum, raw))
+
+    def _accepts(self, char: str) -> bool:
+        if char.isdigit():
+            return True
+        if char == "." and self._decimal:
+            return "." not in self._buffer
+        if char == "-" and self.minimum < 0:
+            return "-" not in self._buffer
+        return False
+
+    def handle_key(self, event: pygame.event.Event) -> bool:
+        """编辑状态下接管键盘；返回 True 表示事件已被消费。"""
+        if not self.editing:
+            return False
+        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
+            self.commit_edit()
+            return True
+        if event.key == pygame.K_ESCAPE:
+            self.cancel_edit()
+            return True
+        if event.key == pygame.K_BACKSPACE:
+            self._buffer = self._buffer[:-1]
+            return True
+        char = event.unicode
+        if char == "，":  # 中文输入法下的全角句点
+            char = "."
+        if char and self._accepts(char):
+            self._buffer += char
+        return True
+
+    # ---- 交互 ----
+
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not (self.visible and self.enabled):
             return False
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.value_box.collidepoint(event.pos):
+                self.begin_edit()
+                return True
             if self.rect.inflate(0, 6).collidepoint(event.pos):
                 self._dragging = True
                 self.value = self._value_at(event.pos[0])
@@ -164,6 +242,9 @@ class Slider(ValueWidget):
 
     def update(self, dt_ms: float, mouse: tuple[int, int]) -> None:
         super().update(dt_ms, mouse)
+        self._box_hovered = self.enabled and self.value_box.collidepoint(mouse)
+        if self.editing:
+            self._caret_t += dt_ms / 1000.0
         # 兜底：鼠标抬起事件被别处吞掉时，也能用按键状态解除拖拽。
         # 否则滑块会"卡在拖拽态"，之后不按键鼠标一动就改数值。
         if self._dragging:
@@ -177,17 +258,35 @@ class Slider(ValueWidget):
     def draw(self, surface: pygame.Surface, fonts: FontBook) -> None:
         if not self.visible:
             return
+        box = self.value_box
         label_font = fonts.get(13)
-        render.text(surface, label_font, self.label, (self.rect.x, self.rect.y + 2), theme.TEXT_DIM)
-        value_color = theme.ACCENT_HOVER if (self.hovered or self._dragging) else theme.TEXT
         render.text(
             surface,
-            fonts.get(13),
-            self.fmt(self.value),
-            (self.rect.right, self.rect.y + 2),
-            value_color,
-            align="right",
+            label_font,
+            render.truncate(label_font, self.label, max(20, self.rect.width - box.width - 12)),
+            (self.rect.x, self.rect.y + 2),
+            theme.TEXT_DIM,
         )
+
+        # 数值框：点一下就能直接输入
+        if self.editing:
+            box_bg, box_border = theme.BG, theme.ACCENT
+        elif self._box_hovered:
+            box_bg, box_border = theme.PANEL_HOVER, theme.ACCENT_DIM
+        else:
+            box_bg, box_border = theme.PANEL_ALT, theme.BORDER_SOFT
+        render.rounded_rect(surface, box, box_bg, theme.RADIUS_SM)
+        render.rounded_rect(surface, box, box_border, theme.RADIUS_SM, width=1)
+
+        shown = self._buffer if self.editing else self.fmt(self.value)
+        highlighted = self.editing or self.hovered or self._dragging
+        color = theme.ACCENT_HOVER if highlighted else theme.TEXT
+        text_rect = render.text(surface, fonts.get(13), shown, (box.right - 8, box.centery), color,
+                                align="right", baseline="middle")
+        if self.editing and (self._caret_t * 2) % 2 < 1.4:
+            caret_x = min(text_rect.right + 2, box.right - 5)
+            pygame.draw.line(surface, theme.ACCENT_HOVER, (caret_x, box.y + 4),
+                             (caret_x, box.bottom - 5), 2)
 
         track = self._track
         render.rounded_rect(surface, track, theme.PANEL_ALT, theme.RADIUS_PILL)
