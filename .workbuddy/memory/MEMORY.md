@@ -6,11 +6,15 @@
 
 ```bash
 uv sync && uv run boardgames     # 启动
-uv run pytest                    # 测试（102 项）
+uv run pytest                    # 测试（124 项）
 uv run ruff check src tests scripts
 uv run python scripts/benchmark_ai.py
 uv run boardgames --headless --screenshot out.png --demo 20   # 无头截图（SDL dummy）
+uv run boardgames --window 1000x640                           # 强制窗口尺寸调试布局
 ```
+
+版本管理：git（分支 `master`）。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/`
+已忽略；`.workbuddy/memory/` 纳入版本控制。
 
 ## 分层铁律（务必遵守）
 
@@ -63,13 +67,34 @@ uv run boardgames --headless --screenshot out.png --demo 20   # 无头截图（S
 - **事件处理必须判断 `event.type`**。曾出现"分组标题折叠"对**任何**事件都翻转 `expanded`，
   鼠标一划过就每帧翻一次，连标题下的下拉菜单一起疯狂抖动。折叠/按钮之类的交互
   一律限定 `MOUSEBUTTONDOWN + button == 1`。
+- **`MOUSEBUTTONUP` 必须无条件派发给控件**。只在鼠标位于侧栏内时才派发，会让
+  "在侧栏外松开左键"的滑块永远停在拖拽态，之后不按键鼠标一动就改数值。
+  滑块自身还要在 `update()` 里用 `pygame.mouse.get_pressed()` 兜底解除。
 - **`Session.is_thinking()` 必须包含 `_pending_move`**。AI 结果已返回但落子停顿（`ai_delay_ms`）
   还没过完时若返回 False，主循环每帧都会重开搜索 → "思考中"闪烁且 AI 永远不落子。
   这类 bug 只在 `ai_delay_ms > AI 思考耗时` 时暴露，测试里用大 `ai_delay_ms` 才能覆盖。
 - **窗口尺寸必须裁剪到屏幕**（`ui.window.choose_window_size()`），否则小屏 / 高 DPI 下
   底部"新局/悔棋/认输"会被裁掉。侧栏宽度也随窗口自适应（`SIDEBAR_W` → `SIDEBAR_MIN_W`）。
-- 中文字体按**文件路径**加载并缓存；`▾/▸` 在雅黑里缺字，用 `▼/▶`。
+- 中文字体按**文件路径**加载并缓存。缺字陷阱：`▾/▸` 和 `▶`（U+25B6）在微软雅黑里没有，
+  别用字形画箭头 —— 用 `pygame.draw.polygon` 画。`▼/▲` 是有的。
 - 面板类绘制顺序：内容 → 覆盖层（下拉弹层）最后画，并 `set_clip` 到面板矩形。
+
+## 棋盘交互约定（Quoridor）
+
+- **全程鼠标，没有"放墙模式"**。`ViewState` 不带 `placing`，朝向也不是用户设置项。
+- 判定在 `QuoridorView._intent()`：取鼠标分数坐标到最近网格线的距离，
+  `min(dist_v, dist_h) <= EDGE_ZONE(0.26)` → 放墙（朝向取更近的那条线；在交点附近
+  两者都近时优先给**能放**的朝向），否则 → 走子。
+- 只有**内部**网格交点能放墙（外框上没有墙槽）。
+- 兜底：该位置放不下墙、而底下格子是合法落点时，点击退化为走子。
+- 落子/悔棋/新局后局面对象会变，`draw()` 里检测 `_intent_state is not state` 重算悬停意图，
+  否则幽灵墙预览会停留在过期位置。
+
+## 侧栏按模式精简
+
+`ParamSpec` 有 `needs_ai` / `needs_engine` 两个可见性条件；`Sidebar` 从
+`status.player_types` 解析"实际参战引擎集合"，据此过滤分组与单个参数。
+新增参数时记得标好归属，否则会在不该出现的模式下露出来。
 
 ## 用户偏好（本次交互确认）
 

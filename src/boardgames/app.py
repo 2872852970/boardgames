@@ -74,6 +74,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--window", type=_parse_size, default=None, help="强制窗口尺寸，如 1000x640（用于验证布局）"
     )
+    parser.add_argument(
+        "--hover",
+        choices=("none", "wall-h", "wall-v", "cell"),
+        default="none",
+        help="截图时模拟鼠标悬停，用来拍下放墙预览 / 走子高亮",
+    )
     return parser.parse_args(argv)
 
 
@@ -113,6 +119,9 @@ def main(argv: list[str] | None = None) -> int:
                 session.play(move)
             window.view.set_last_move(session.history[-1].move)
 
+        if args.hover != "none":
+            _simulate_hover(window, args.hover)
+
         for _ in range(12):
             window._handle_events()
             window._update(16.0)
@@ -125,6 +134,28 @@ def main(argv: list[str] | None = None) -> int:
 
     window.run(max_frames=args.frames)
     return 0
+
+
+def _simulate_hover(window, mode: str) -> None:
+    """截图辅助：把鼠标"放"到某个位置，好拍下悬停预览。"""
+    session = window.session
+    view = window.view
+    state = session.state
+    if mode == "cell":
+        moves = session.game.pawn_moves_for(state, state.current_player)
+        if moves:
+            pos = view.cell_center(*moves[0].dst)
+        else:
+            return
+    else:
+        orient = "h" if mode == "wall-h" else "v"
+        walls = [w for w in session.game.all_legal_walls(state, state.current_player)
+                 if w.orient == orient]
+        if not walls:
+            return
+        pos = view.anchor_center(walls[len(walls) // 2].wall)
+    window.view_state.mouse = pos
+    view.handle_motion(pos, session.game, state, window.view_state)
 
 
 if __name__ == "__main__":  # pragma: no cover
