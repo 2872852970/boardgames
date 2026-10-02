@@ -47,6 +47,10 @@ class WallMove(Move):
     ax: int
     ay: int
 
+    @property
+    def is_placement(self) -> bool:
+        return True
+
     def describe(self) -> str:
         kind = "横墙" if self.orient == "h" else "竖墙"
         return f"放{kind}@({self.ax},{self.ay})"

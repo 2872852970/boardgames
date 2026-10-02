@@ -1,13 +1,17 @@
 """步步为营的棋盘渲染与交互。
 
-**全程鼠标操作，不需要任何"放墙模式"**：
+**全程鼠标，用右键切换"放墙模式"**：
 
-* 鼠标移到**格子边缘**（靠近网格线）→ 吸附到最近的墙锚点，画出幽灵墙预览
-  （绿色=可放，红色=不可放），点一下即落墙；
-* 鼠标移到**格子中心** → 高亮合法落点，点一下即走子（含跳跃）。
+* 右键开 / 关放墙模式（放下一面墙后会自动退出，一回合只需要放一面）；
+* 放墙模式下：鼠标吸附到**最近的内部网格交点**，画出幽灵墙预览
+  （绿色=可放，红色=不可放），点一下即落墙；**四个格子的公共交点同样有提示**；
+* 非放墙模式：只高亮合法走子落点，点一下即走子（含跳跃）。
 
-两者由"鼠标离最近网格线的距离"自动区分：离网格线近就是放墙，离格子中心近就是走子，
-所以不需要额外按钮来切换模式 —— 也就不存在"放墙按钮"和"走子按钮"的冲突。
+朝向（横 / 竖）带有**滞回**：一旦在某个交点选定了朝向，鼠标只是轻微抖动不会换朝向，
+必须明显偏向另一条网格线才会切换 —— 否则在交点附近预览会在横竖之间疯狂跳。
+
+``QuoridorView`` 自己管朝向的滞回状态；是否处于放墙模式由 ``ViewState.extra["wall_mode"]``
+统一持有（和窗口 / 侧栏共享）。
 """
 
 from __future__ import annotations
@@ -26,13 +30,15 @@ from boardgames.ui.animation import Tween, ease_out_back, ease_out_cubic, lerp_p
 from boardgames.ui.board_view import ViewState
 from boardgames.ui.fonts import FontBook
 
-#: 鼠标离网格线多近算"在格子边缘"（单位：格；0.5 就是半个格子）
-EDGE_ZONE = 0.26
-#: 鼠标离网格**交点**（四个格子的公共点）这么近时不给放墙提示。
-#: 交点上横竖两种都说得通，猜来猜去就会随鼠标抖动，所以干脆不提示。
-CORNER_ZONE = 0.14
-#: 刚放下的那面墙，鼠标还停在这个范围内就不再提示（避免"刚放完又提示能放"）
+#: 放墙模式下鼠标吸附范围（单位：格）。每个内部交点负责它周围 1×1 格的方形区域，
+#: 因此鼠标在棋盘内部任何位置都能吸附到唯一的交点，不会出现"有提示 / 没提示"的跳变。
+WALL_SNAP_ZONE = 0.45
+#: 朝向滞回阈值：只有明显偏向另一条网格线才换朝向，避免在交点附近抖动
+ORIENT_HYSTERESIS = 0.12
+#: 刚放下的那面墙，鼠标还停在这个范围内就不再提示
 JUST_PLACED_RADIUS = 0.75
+
+WALL_MODE_KEY = "wall_mode"
 
 
 def _round_half_up(value: float) -> int:
@@ -75,6 +81,10 @@ class QuoridorView:
         self._intent_state: QuoridorState | None = None
         #: 刚放下的墙：鼠标还停在这附近时不重复提示
         self._just_placed_wall: Wall | None = None
+        #: 朝向滞回状态（当前吸附的交点 + 已选定朝向 + 是否被手动锁定）
+        self._wall_anchor: tuple[int, int] | None = None
+        self._wall_orient: str = HORIZONTAL
+        self._orient_locked = False
         # 走子落点缓存
         self._cache_state: QuoridorState | None = None
         self._pawn_targets: set[tuple[int, int]] = set()
@@ -153,43 +163,63 @@ class QuoridorView:
         return None
 
     # ------------------------------------------------------------------ #
-    # 悬停意图：格子边缘 = 放墙，格子中心 = 走子
+    # 悬停意图：放墙模式吸附交点，否则只做走子
     # ------------------------------------------------------------------ #
 
-    def _intent(self, pos: tuple[int, int], game, state: QuoridorState) -> _Intent:
+    def _intent(self, pos: tuple[int, int], game, state: QuoridorState, view: ViewState) -> _Intent:
         if not isinstance(state, QuoridorState):
             return _Intent("none")
         size = state.size
         fx, fy = self._fractional(pos)
-        if not (-0.3 <= fx <= size + 0.3 and -0.3 <= fy <= size + 0.3):
-            return _Intent("none")
-
-        line_x = _round_half_up(fx)
-        line_y = _round_half_up(fy)
-        dist_v = abs(fx - line_x)  # 到竖直网格线的距离
-        dist_h = abs(fy - line_y)  # 到水平网格线的距离
-
-        # 只有**内部**网格交点附近才能放墙（棋盘外框上没有墙槽）；
-        # 而且必须**贴着其中一条线**：正卡在交点上时横竖说不清，干脆不提示。
-        interior = 1 <= line_x <= size - 1 and 1 <= line_y <= size - 1
-        near_line = min(dist_v, dist_h) <= EDGE_ZONE
-        at_corner = max(dist_v, dist_h) <= CORNER_ZONE
-        if interior and near_line and not at_corner:
-            orient = HORIZONTAL if dist_h <= dist_v else VERTICAL
-            wall = (orient, line_x - 1, line_y - 1)
-            if wall != self._just_placed_wall:
-                legal = game.is_wall_legal(state, state.current_player, wall)
-                return _Intent("wall", self.cell_at(pos), wall, legal)
-            # 刚放下的那面墙：不再重复提示
+        if not (-0.5 <= fx <= size + 0.5 and -0.5 <= fy <= size + 0.5):
             return _Intent("none")
 
         cell = self.cell_at(pos)
-        if cell is None:
-            return _Intent("none")
-        return _Intent("cell", cell, None, cell in self._targets(game, state))
+
+        if not view.flag(WALL_MODE_KEY, False):
+            if cell is None:
+                return _Intent("none")
+            return _Intent("cell", cell, None, cell in self._targets(game, state))
+
+        # ---- 放墙模式：吸附到最近的**内部**网格交点（棋盘外框上没有墙槽）----
+        line_x = min(max(_round_half_up(fx), 1), size - 1)
+        line_y = min(max(_round_half_up(fy), 1), size - 1)
+        wall = self._sticky_wall(line_x, line_y, fx, fy)
+        if wall == self._just_placed_wall:
+            return _Intent("none")  # 刚放下的那面墙不再重复提示
+        # 不可放时也给出预览（红色 + 叉），让用户看得到"这里放不了"
+        legal = game.is_wall_legal(state, state.current_player, wall)
+        return _Intent("wall", cell, wall, legal)
+
+    def _sticky_wall(self, line_x: int, line_y: int, fx: float, fy: float) -> Wall:
+        """在交点附近挑选朝向时加滞回，避免鼠标轻微移动就在横 / 竖之间跳。"""
+        anchor = (line_x - 1, line_y - 1)
+        if self._wall_anchor != anchor:
+            # 换了一个交点 → 按"离哪条线更近"重新决定朝向（一样近时默认横墙），
+            # 并且解除手动锁定
+            self._wall_anchor = anchor
+            self._orient_locked = False
+            dist_v = abs(fx - line_x)
+            dist_h = abs(fy - line_y)
+            self._wall_orient = HORIZONTAL if dist_h <= dist_v else VERTICAL
+        elif not self._orient_locked:
+            dist_v = abs(fx - line_x)
+            dist_h = abs(fy - line_y)
+            if self._wall_orient == HORIZONTAL:
+                if dist_v < dist_h - ORIENT_HYSTERESIS:
+                    self._wall_orient = VERTICAL
+            elif dist_h < dist_v - ORIENT_HYSTERESIS:
+                self._wall_orient = HORIZONTAL
+        return (self._wall_orient, anchor[0], anchor[1])
+
+    def flip_orientation(self) -> str:
+        """手动翻转待放墙的朝向（V 键），并锁定到离开当前交点为止。"""
+        self._wall_orient = VERTICAL if self._wall_orient == HORIZONTAL else HORIZONTAL
+        self._orient_locked = True
+        return self._wall_orient
 
     def _refresh_intent(self, pos, game, state, view: ViewState) -> _Intent:
-        intent = self._intent(pos, game, state)
+        intent = self._intent(pos, game, state, view)
         self._intent_state = state
         self._hover_kind = intent.kind
         self._hover_legal = intent.legal
@@ -222,32 +252,30 @@ class QuoridorView:
             return None
         intent = self._refresh_intent(pos, game, state, view)
         player = state.current_player
-        targets = self._targets(game, state)
 
         if intent.kind == "wall" and intent.wall is not None:
-            if intent.legal:
-                # 记下来：鼠标不挪开就不再对这个位置给提示
-                self._just_placed_wall = intent.wall
-                return WallMove(*intent.wall)
-            # 该位置放不了墙时，退一步：鼠标底下的格子若是合法落点就走子
-            if intent.cell is not None and intent.cell in targets:
-                return PawnMove(state.pawns[player], intent.cell)
-            return None
+            if not intent.legal:
+                return None
+            # 记下来：鼠标不挪开就不再对这个位置给提示
+            self._just_placed_wall = intent.wall
+            return WallMove(*intent.wall)
 
-        if intent.cell is not None and intent.cell in targets:
+        if intent.cell is not None and intent.cell in self._targets(game, state):
             return PawnMove(state.pawns[player], intent.cell)
         return None
 
-    def hover_hint(self) -> tuple[str, tuple[int, int, int]]:
+    def hover_hint(self, view: ViewState) -> tuple[str, tuple[int, int, int]]:
         """给棋盘 HUD 用的一句话提示。"""
-        if self._hover_wall is not None:
+        if view.flag(WALL_MODE_KEY, False):
+            if self._hover_wall is None:
+                return "右键退出放墙模式", theme.TEXT_FAINT
             kind = "横墙" if self._hover_wall[0] == HORIZONTAL else "竖墙"
             if self._hover_legal:
-                return f"点击放置{kind}", theme.OK
+                return f"点击放置{kind}（V 键换朝向）", theme.OK
             return f"{kind}不可放", theme.BAD
         if self._hover_target is not None:
             return "点击走子", theme.ACCENT
-        return "", theme.TEXT_FAINT
+        return "右键进入放墙模式", theme.TEXT_FAINT
 
     # ------------------------------------------------------------------ #
     # 动画
@@ -292,6 +320,8 @@ class QuoridorView:
         self._cache_state = None
         self._intent_state = None
         self._just_placed_wall = None
+        self._wall_anchor = None
+        self._orient_locked = False
         self._last_move = None
 
     def set_last_move(self, move: Move | None) -> None:
@@ -323,6 +353,7 @@ class QuoridorView:
         outer = board.inflate(self.wall_thickness + 14, self.wall_thickness + 14)
         render.panel(surface, outer, color=theme.BOARD_BG, radius=theme.RADIUS + 6)
 
+        wall_mode = bool(view.flag(WALL_MODE_KEY, False))
         self._draw_goal_rows(surface, board, state)
         self._draw_cells(surface, state)
         self._draw_slots(surface, state)
@@ -330,10 +361,12 @@ class QuoridorView:
         if interactive:
             self._draw_ghost(surface)
         self._draw_last_move(surface, state)
-        if interactive:
+        if interactive and not wall_mode:
+            # 放墙模式下不显示走子落点，避免和幽灵墙混淆
             self._draw_hints(surface, state, game)
         self._draw_pawns(surface, state, interactive)
-        render.rounded_rect(surface, board.inflate(6, 6), theme.BORDER, theme.RADIUS, width=1)
+        frame_color = theme.OK if wall_mode else theme.BORDER
+        render.rounded_rect(surface, board.inflate(6, 6), frame_color, theme.RADIUS, width=1)
 
     # ---- 各图层 ----
 
@@ -458,4 +491,4 @@ def make_view() -> QuoridorView:
     return QuoridorView()
 
 
-__all__ = ["QuoridorView", "make_view"]
+__all__ = ["WALL_MODE_KEY", "QuoridorView", "make_view"]

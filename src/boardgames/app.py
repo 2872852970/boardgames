@@ -76,7 +76,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--hover",
-        choices=("none", "wall-h", "wall-v", "cell"),
+        choices=("none", "wall-h", "wall-v", "corner", "cell"),
         default="none",
         help="截图时模拟鼠标悬停，用来拍下放墙预览 / 走子高亮",
     )
@@ -138,25 +138,29 @@ def main(argv: list[str] | None = None) -> int:
 
 def _simulate_hover(window, mode: str) -> None:
     """截图辅助：把鼠标"放"到某个位置，好拍下悬停预览。"""
+    from boardgames.games.quoridor.view import WALL_MODE_KEY
+
     session = window.session
     view = window.view
     state = session.state
     if mode == "cell":
+        window.view_state.extra[WALL_MODE_KEY] = False
         moves = session.game.pawn_moves_for(state, state.current_player)
-        if moves:
-            pos = view.cell_center(*moves[0].dst)
-        else:
+        if not moves:
             return
+        pos = view.cell_center(*moves[0].dst)
     else:
-        orient = "h" if mode == "wall-h" else "v"
+        window.view_state.extra[WALL_MODE_KEY] = True
+        orient = "v" if mode == "wall-v" else "h"
         walls = [w for w in session.game.all_legal_walls(state, state.current_player)
                  if w.orient == orient]
         if not walls:
             return
         pos = view.anchor_center(walls[len(walls) // 2].wall)
-        # 网格交点本身不提示放墙（横竖说不清），沿这条边挪开一点才落在提示区
-        offset = max(1, int(view.cell * 0.4))
-        pos = (pos[0] + offset, pos[1]) if orient == "h" else (pos[0], pos[1] + offset)
+        if mode != "corner":
+            # 交点上也能提示；这里沿这条边挪开一点，拍"贴着边放墙"的常规用法
+            offset = max(1, int(view.cell * 0.4))
+            pos = (pos[0] + offset, pos[1]) if orient == "h" else (pos[0], pos[1] + offset)
     window.view_state.mouse = pos
     view.handle_motion(pos, session.game, state, window.view_state)
 

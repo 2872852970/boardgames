@@ -14,6 +14,14 @@ class Move(ABC):
 
     __slots__ = ()
 
+    @property
+    def is_placement(self) -> bool:
+        """是否是"放置型"着法（例如放墙）。
+
+        框架用它来决定放完之后要不要退出放置模式，从而不必知道具体棋类。
+        """
+        return False
+
     @abstractmethod
     def describe(self) -> str:
         """返回人类可读的描述，用于日志/调试。"""

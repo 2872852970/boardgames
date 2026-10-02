@@ -48,6 +48,8 @@ class GameSession:
         self.history: list[Snapshot] = []
         self.last_stats: SearchStats | None = None
         self.paused = False
+        #: 「单步」请求：暂停状态下也允许 AI 走一子，走完仍然保持暂停
+        self.stepping = False
         self._pending_move: Move | None = None
         self._pending_stats: SearchStats | None = None
         self._ready_at = 0.0
@@ -87,7 +89,9 @@ class GameSession:
         self.state = self.game.initial_state()
         self.result = Termination.ONGOING
         self.resigned_by: int | None = None
-        self.paused = False
+        # AI 自对弈默认**暂停**，由用户按"单步"或点棋盘一步步推进
+        self.paused = self.mode == "eve"
+        self.stepping = False
         self.history = [Snapshot(self.state, None, -1)]
         self.last_stats = None
         self._pending_move = None
@@ -200,6 +204,18 @@ class GameSession:
         self._pending_stats = None
         self._ready_at = 0.0
         self._thinking_since = 0.0
+        self.stepping = False
+
+    def ai_allowed(self) -> bool:
+        """AI 现在可以行动吗（暂停时为 False，除非用户点了「单步」）。"""
+        return not self.paused or self.stepping
+
+    def request_step(self) -> bool:
+        """自对弈暂停时，让 AI 走一子；走完仍然保持暂停。"""
+        if self.is_over or not self.paused or self.is_thinking():
+            return False
+        self.stepping = True
+        return True
 
     def is_thinking(self) -> bool:
         """AI 是否"还在忙"。
@@ -221,7 +237,7 @@ class GameSession:
 
     def start_thinking(self) -> None:
         """若轮到 AI 且尚未开始思考，则启动后台搜索。"""
-        if self.is_over or self.paused or self.is_thinking():
+        if self.is_over or not self.ai_allowed() or self.is_thinking():
             return
         player = self.state.current_player
         engine = self._engine_for(player)
@@ -253,6 +269,7 @@ class GameSession:
         self._pending_move = None
         self._pending_stats = None
         self._ready_at = 0.0
+        self.stepping = False  # 单步用完就复位（paused 保持原样）
         if self.is_over or move is None or not self.game.is_legal(self.state, move):
             return None
         self.play(move)

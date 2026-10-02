@@ -138,6 +138,7 @@ class Sidebar:
         self.footer_buttons = [
             Button("新局", lambda: self.on_action("new_game", None), variant="primary"),
             Button("悔棋", lambda: self.on_action("undo", None)),
+            Button("单步", lambda: self.on_action("step", None), key="step"),
             Button("暂停", lambda: self.on_action("toggle_pause", None), key="pause"),
             Button("认输", lambda: self.on_action("resign", None), variant="danger"),
         ]
@@ -338,7 +339,7 @@ class Sidebar:
     def _visible_footer(self) -> list[Button]:
         if self._is_eve():
             return self.footer_buttons
-        return [b for b in self.footer_buttons if b.key != "pause"]
+        return [b for b in self.footer_buttons if b.key not in ("pause", "step")]
 
     def _footer_button_rect(self, index: int, count: int) -> pygame.Rect:
         gap = 8
@@ -434,6 +435,9 @@ class Sidebar:
             return self.status.can_undo
         if label == "认输":
             return not self.status.is_over
+        if label == "单步":
+            # 只有"暂停中"才需要单步
+            return self.status.paused and not self.status.is_over
         if label == "暂停":
             return not self.status.is_over
         return True
@@ -478,7 +482,7 @@ class Sidebar:
             text = status.winner_text or "对局结束"
             color = theme.WARN
         elif status.paused:
-            text = "已暂停"
+            text = "已暂停 · 可点「单步」推进" if self._is_eve() else "已暂停"
         elif status.current_player is not None:
             name = f"玩家 {status.current_player + 1}"
             color = theme.PLAYER_COLORS[status.current_player]

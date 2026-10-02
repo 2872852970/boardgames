@@ -85,20 +85,30 @@ UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests
 
 ## 棋盘交互约定（Quoridor）
 
-- **全程鼠标，没有"放墙模式"**。`ViewState` 不带 `placing`，朝向也不是用户设置项。
-- 判定在 `QuoridorView._intent()`：取鼠标分数坐标到最近网格线的距离，
-  令 `dv`/`dh` 分别为到竖直/水平网格线的距离，则
-  - `min(dv,dh) <= EDGE_ZONE(0.26)` 且 `max(dv,dh) > CORNER_ZONE(0.14)` → 放墙
-    （朝向 = 更近的那条线，`h` 或 `v`）；
-  - **两者都 <= CORNER_ZONE（四个格子的公共交点）→ 不提示** —— 那里横竖说不清，
-    猜来猜去会让预览随鼠标抖动；
-  - 否则 → 走子。
-- 只有**内部**网格交点能放墙（外框上没有墙槽）。
-- **刚放下的墙不重复提示**：`_just_placed_wall` + `JUST_PLACED_RADIUS(0.75 格)`，
-  鼠标离开这个范围才恢复提示。
-- 兜底：该位置放不下墙、而底下格子是合法落点时，点击退化为走子。
-- 落子/悔棋/新局后局面对象会变，`draw()` 里检测 `_intent_state is not state` 重算悬停意图，
-  否则幽灵墙预览会停留在过期位置。
+- **右键切换「放墙模式」**，模式本身存在 `ViewState.extra["wall_mode"]`（键 `WALL_MODE_KEY`），
+  窗口负责翻转，视图只读它。**没有**"按鼠标位置自动猜走子还是放墙"那套启发式了
+  —— 那套在交点附近必然抖动。
+- `QuoridorView._intent()`：
+  - 非放墙模式 → 只做走子（cell intent）；
+  - 放墙模式 → 把鼠标分数坐标吸附到最近的**内部**网格交点
+    （`line = clamp(round_half_up(f), 1, size-1)`，因此棋盘内部处处可吸附，没有"有/无提示"的跳变），
+    朝向见下。
+  - 只有**内部**交点能放墙（外框上没有墙槽）。
+- **朝向滞回**（`_sticky_wall`）：同一交点内保持已选朝向，只有另一条线的距离明显更近
+  （超过 `ORIENT_HYSTERESIS = 0.12` 格）才切换；换交点时按"离哪条线更近"重选（一样近取横墙）。
+  这是"交点也能提示但不抖动"的关键。`flip_orientation()`（V 键）手动锁定朝向，
+  离开当前交点后解锁。
+- 放墙后 `_just_placed_wall` 抑制同一位置的重复提示（`JUST_PLACED_RADIUS = 0.75` 格）；
+  放完墙由窗口自动退出放墙模式（判断依据是 `Move.is_placement`，框架级通用属性）。
+- 落子/悔棋/新局后局面对象会变，`draw()` 里检测 `_intent_state is not state` 重算悬停意图。
+
+## AI 自对弈的暂停与单步
+
+- `GameSession.new_game()` 在 `mode == "eve"` 时 `paused = True`；
+  `ai_allowed()` 决定 AI 能不能动（`not paused or stepping`），
+  `start_thinking()` 用它做闸门 —— 所以窗口可以直接无条件调用。
+- `request_step()` 置 `stepping = True`；`poll()` 落子后把 `stepping` 复位，`paused` 不变，
+  因此单步走完仍然暂停。侧栏在 eve 模式才显示「单步」「暂停」两个按钮。
 
 ## 侧栏按模式精简 + 数值输入
 

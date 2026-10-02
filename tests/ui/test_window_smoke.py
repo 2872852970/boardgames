@@ -12,6 +12,7 @@ from helpers import key_event as _key  # noqa: F401  (供后续用例使用)
 from helpers import motion as _motion  # noqa: F401
 from helpers import pos_for as _pos_for
 
+from boardgames.games.quoridor.view import WALL_MODE_KEY
 from boardgames.settings import Settings
 
 
@@ -44,21 +45,37 @@ def test_click_outside_targets_is_ignored(make_window):
     assert len(session.history) == 1
 
 
-def test_hover_near_horizontal_edge_previews_horizontal_wall(make_window):
+def _wall_mode(window, on: bool = True) -> None:
+    window.view_state.extra[WALL_MODE_KEY] = on
+
+
+def test_wall_mode_previews_horizontal_wall(make_window):
     window = make_window(mode="pvp")
     session = window.session
+    _wall_mode(window)
     window.view.handle_motion(_pos_for(window, 4.4, 4.0), session.game, session.state,
                               window.view_state)
     assert window.view._hover_wall == ("h", 3, 3)
     assert window.view._hover_legal is True
 
 
-def test_hover_near_vertical_edge_previews_vertical_wall(make_window):
+def test_wall_mode_previews_vertical_wall(make_window):
     window = make_window(mode="pvp")
     session = window.session
+    _wall_mode(window)
     window.view.handle_motion(_pos_for(window, 4.0, 4.4), session.game, session.state,
                               window.view_state)
     assert window.view._hover_wall == ("v", 3, 3)
+
+
+def test_no_wall_hint_when_mode_is_off(make_window):
+    """不放墙时贴边也不提示，只提示走子落点。"""
+    window = make_window(mode="pvp")
+    session = window.session
+    for fx, fy in ((4.4, 4.0), (4.0, 4.4), (4.0, 4.0)):
+        window.view.handle_motion(_pos_for(window, fx, fy), session.game, session.state,
+                                  window.view_state)
+        assert window.view._hover_wall is None
 
 
 def test_hover_in_cell_center_shows_pawn_target(make_window):
@@ -70,10 +87,10 @@ def test_hover_in_cell_center_shows_pawn_target(make_window):
     assert window.view._hover_target == (4, 7)
 
 
-def test_click_on_edge_places_wall_without_any_mode(make_window):
-    """核心交互：不需要切模式，鼠标放到格子边缘直接点击就落墙。"""
+def test_wall_mode_click_places_horizontal_wall(make_window):
     window = make_window(mode="pvp")
     session = window.session
+    _wall_mode(window)
     pos = _pos_for(window, 4.4, 4.0)
     pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": pos, "button": 1}))
     window._handle_events()
@@ -81,11 +98,14 @@ def test_click_on_edge_places_wall_without_any_mode(make_window):
     assert len(session.history) == 2
     assert session.state.walls_left[0] == 9
     assert session.state.h_mask != 0  # 放的是横墙
+    # 一回合只放一面墙：放完自动退出放墙模式
+    assert window.view_state.extra[WALL_MODE_KEY] is False
 
 
-def test_click_on_edge_places_vertical_wall(make_window):
+def test_wall_mode_click_places_vertical_wall(make_window):
     window = make_window(mode="pvp")
     session = window.session
+    _wall_mode(window)
     pos = _pos_for(window, 4.0, 4.4)
     pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": pos, "button": 1}))
     window._handle_events()
@@ -95,7 +115,7 @@ def test_click_on_edge_places_vertical_wall(make_window):
 
 
 def test_click_in_cell_center_moves_pawn(make_window):
-    """点击格子中心是走子，不会被当成放墙。"""
+    """不在放墙模式时，点击落点就是走子。"""
     window = make_window(mode="pvp")
     session = window.session
     pos = _pos_for(window, 4.5, 7.5)
@@ -107,29 +127,23 @@ def test_click_in_cell_center_moves_pawn(make_window):
     assert session.state.walls_left[0] == 10  # 没消耗墙
 
 
-def test_illegal_wall_position_falls_back_to_pawn_move(make_window):
-    """在放不下墙的位置点击时，若底下格子是合法落点就走子，而不是毫无反应。"""
+def test_wall_mode_click_on_illegal_spot_does_nothing(make_window):
+    """放墙模式下点到放不了的位置：不放墙，也不顺手走子。"""
     from boardgames.games.quoridor.state import QuoridorState
 
     window = make_window(mode="pvp")
     session = window.session
-    # 玩家 1 的墙用完了 → 所有墙位都非法
     session.state = QuoridorState(
-        size=9,
-        pawns=((4, 8), (4, 0)),
-        walls_left=(0, 10),
-        h_mask=0,
-        v_mask=0,
-        current=0,
-        ply=0,
+        size=9, pawns=((4, 8), (4, 0)), walls_left=(0, 10),
+        h_mask=0, v_mask=0, current=0, ply=0,
     )
-
-    pos = _pos_for(window, 4.4, 7.0)  # 位于 (4,7) 的上边缘
+    _wall_mode(window)
+    pos = _pos_for(window, 4.4, 4.0)
     pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": pos, "button": 1}))
     window._handle_events()
 
-    assert session.state.pawns[0] == (4, 7), "非法墙位上应当退化为走子"
-    assert session.state.walls_left[0] == 0
+    assert len(session.history) == 1, "非法墙位不该产生着法"
+    assert session.state.pawns[0] == (4, 8)
 
 
 def test_undo_returns_to_opening(make_window):
@@ -176,6 +190,10 @@ def test_ai_self_play_makes_progress(make_window):
         mode="eve", p1_type="minimax", p2_type="minimax",
         minimax_depth=1, minimax_time_ms=120, ai_delay_ms=0, anim_ms=0,
     )
+    session = window.session
+    assert session.paused is True, "AI 自对弈应当默认暂停"
+    session.paused = False  # 本用例要验证"自动连续对弈"这条路
+
     deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
         window._update(16.0)

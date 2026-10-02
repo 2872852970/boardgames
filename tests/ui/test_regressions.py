@@ -165,6 +165,7 @@ def test_is_thinking_stays_true_until_move_lands(make_window):
         minimax_depth=1, minimax_time_ms=120, ai_delay_ms=400, anim_ms=0,
     )
     session = window.session
+    session.paused = False  # 本用例要观察"思考 → 落子"的完整过程
     session.start_thinking()
     assert session.is_thinking()
 

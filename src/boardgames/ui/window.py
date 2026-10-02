@@ -8,6 +8,7 @@ import pygame
 
 from boardgames.controller import GameSession
 from boardgames.core.registry import GameRegistry
+from boardgames.games.quoridor.view import WALL_MODE_KEY
 from boardgames.settings import Settings
 from boardgames.ui import render, theme
 from boardgames.ui.animation import Tween, ease_out_cubic
@@ -170,8 +171,15 @@ class GameWindow:
         if key in RESTART_KEYS:
             self._restart()
             self.toast.show("棋局设置已生效，已开新局")
+        elif key == "mode":
+            # 模式变了：作废正在进行的搜索，并让「自对弈默认暂停」重新生效
+            self.session.cancel_thinking()
+            self.session.paused = value == "eve"
+            self.view_state.extra[WALL_MODE_KEY] = False
+            if value == "eve":
+                self.toast.show("AI 自对弈已暂停：点「单步」或点棋盘逐步推进")
         elif key in MODE_KEYS:
-            # 对局双方/模式变了：正在进行的搜索立刻作废（可能换了引擎或不再是 AI 回合）
+            # 换了引擎 / 不再是 AI 的回合：作废进行中的搜索
             self.session.cancel_thinking()
         elif key.startswith(AI_KEYS_PREFIX) and self.session.is_thinking():
             # 让新参数立即生效
@@ -185,6 +193,11 @@ class GameWindow:
             self._do_undo()
         elif action == "resign":
             self.session.resign()
+        elif action == "step":
+            if self.session.request_step():
+                self.toast.show("单步：AI 思考中…")
+            else:
+                self.toast.show("先暂停才能单步推进")
         elif action == "toggle_pause":
             self.session.paused = not self.session.paused
             if self.session.paused:
@@ -194,8 +207,11 @@ class GameWindow:
     def _restart(self) -> None:
         self.session.new_game()
         self.view.reset()
+        self.view_state.extra[WALL_MODE_KEY] = False
         self._last_move = None
         self.sidebar.sync_from_settings()
+        if self.session.mode == "eve":
+            self.toast.show("AI 自对弈已暂停：点「单步」或点棋盘逐步推进")
 
     def _do_undo(self) -> None:
         if not self.session.can_undo():
@@ -204,6 +220,7 @@ class GameWindow:
         steps_before = len(self.session.history)
         if self.session.undo():
             self.view.reset()
+            self.view_state.extra[WALL_MODE_KEY] = False
             removed = steps_before - len(self.session.history)
             self._last_move = self.session.history[-1].move
             self.view.set_last_move(self._last_move)
@@ -244,16 +261,56 @@ class GameWindow:
 
     def _handle_key(self, event: pygame.event.Event) -> None:
         session = self.session
+        wall_mode = bool(self.view_state.extra.get(WALL_MODE_KEY, False))
         if event.key == pygame.K_ESCAPE:
-            self.running = False
+            if wall_mode:
+                self.view_state.extra[WALL_MODE_KEY] = False
+                self.toast.show("已退出放墙模式")
+            else:
+                self.running = False
+        elif event.key == pygame.K_v and wall_mode:
+            orient = self.view.flip_orientation()
+            self.toast.show("换成" + ("横墙" if orient == "h" else "竖墙"))
+            self._refresh_hover()
         elif event.key == pygame.K_n:
             self._on_action("new_game", None)
         elif event.key == pygame.K_u:
             self._do_undo()
         elif event.key == pygame.K_r:
             self._on_action("resign", None)
-        elif event.key == pygame.K_SPACE and (session.mode == "eve" or session.is_over):
+        elif event.key in (pygame.K_SPACE, pygame.K_s) and session.mode == "eve":
+            if event.key == pygame.K_s:
+                self._on_action("step", None)
+            else:
+                self._on_action("toggle_pause", None)
+        elif event.key == pygame.K_SPACE and session.is_over:
             self._on_action("toggle_pause", None)
+
+    def _refresh_hover(self) -> None:
+        """按当前鼠标位置重算悬停预览（切模式 / 换朝向 / 局面变化后调用）。"""
+        self.view.handle_motion(
+            self.view_state.mouse, self.session.game, self.session.state, self.view_state
+        )
+
+    def _toggle_wall_mode(self) -> None:
+        if not self._interactive():
+            self.toast.show(self._blocked_reason())
+            return
+        turning_on = not self.view_state.extra.get(WALL_MODE_KEY, False)
+        self.view_state.extra[WALL_MODE_KEY] = turning_on
+        self.toast.show(
+            "放墙模式：移动鼠标预览，点击落墙（右键 / Esc 退出）" if turning_on else "已退出放墙模式"
+        )
+        self._refresh_hover()
+
+    def _try_single_step(self) -> bool:
+        """自对弈暂停时，点棋盘 = 单步推进。"""
+        session = self.session
+        if session.mode != "eve" or not session.paused or session.is_over:
+            return False
+        if session.request_step():
+            self.toast.show("单步：AI 思考中…")
+        return True
 
     def _handle_pointer(self, event: pygame.event.Event) -> None:
         if self.session.is_over:
@@ -269,8 +326,15 @@ class GameWindow:
                 self.view.handle_motion(event.pos, self.session.game, self.session.state, self.view_state)
             return
 
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            if self.board_area.collidepoint(event.pos):
+                self._toggle_wall_mode()
+            return
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if not self.board_area.collidepoint(event.pos):
+                return
+            if self._try_single_step():
                 return
             if not self._interactive():
                 self.toast.show(self._blocked_reason())
@@ -288,6 +352,9 @@ class GameWindow:
         self.view.set_last_move(move)
         self._last_move = move
         self.session.play(move)
+        if move.is_placement:
+            # 一回合只放一面墙：放完自动退出放墙模式
+            self.view_state.extra[WALL_MODE_KEY] = False
 
     # ------------------------------------------------------------------ #
     # 更新
@@ -308,7 +375,7 @@ class GameWindow:
         if session.is_over:
             return "对局已结束"
         if session.paused:
-            return "已暂停，按空格继续"
+            return "已暂停：点「单步」或点棋盘推进"
         if session.is_thinking():
             return "AI 正在思考…"
         if self.view.is_animating():
@@ -325,8 +392,8 @@ class GameWindow:
             session.state.current_player if session.is_human_turn() else None
         )
 
-        # AI 调度
-        if not session.is_over and not session.paused and session.is_ai_turn():
+        # AI 调度（暂停 / 单步由 session 自己判断）
+        if not session.is_over and session.is_ai_turn():
             session.start_thinking()
         move = session.poll()
         if move is not None:
@@ -400,27 +467,36 @@ class GameWindow:
         """棋盘下方操作提示 + 左上角的悬停意图提示。"""
         area = self.board_area
         fonts = self.fonts
+        wall_mode = bool(self.view_state.extra.get(WALL_MODE_KEY, False))
+        if self.session.mode == "eve" and self.session.paused and not self.session.is_over:
+            tip = "AI 自对弈已暂停：点棋盘或「单步」推进一步，空格继续自动对弈"
+        elif wall_mode:
+            tip = "放墙模式：移动鼠标预览（绿可放 / 红不可放），点击落墙；右键或 Esc 退出，V 换朝向"
+        else:
+            tip = "点击高亮圆点走子；右键进入放墙模式"
         render.text(
             self.screen,
             fonts.get(13),
-            "鼠标移到格子边缘（绿/红预览）点击放墙，移到格子中心点击走子",
+            tip,
             (area.centerx, area.bottom - 24),
-            theme.TEXT_FAINT,
+            theme.OK if (wall_mode or self.session.paused) else theme.TEXT_FAINT,
             align="center",
             baseline="middle",
         )
 
         hint, color = ("", theme.TEXT_FAINT)
         if self._interactive() and hasattr(self.view, "hover_hint"):
-            hint, color = self.view.hover_hint()
-        chip = pygame.Rect(area.x + 18, area.y + 14, 176, 30)
+            hint, color = self.view.hover_hint(self.view_state)
+        chip = pygame.Rect(area.x + 18, area.y + 14, 210, 30)
         render.rounded_rect(self.screen, chip, theme.PANEL, theme.RADIUS_SM)
+        if wall_mode:
+            render.rounded_rect(self.screen, chip, theme.OK, theme.RADIUS_SM, width=1)
         render.text(
             self.screen,
             fonts.get(13),
-            hint or "边缘放墙 · 中心走子",
+            hint or ("放墙模式" if wall_mode else "走子模式"),
             chip.center,
-            color if hint else theme.TEXT_FAINT,
+            color if hint else (theme.OK if wall_mode else theme.TEXT_FAINT),
             align="center",
             baseline="middle",
         )
