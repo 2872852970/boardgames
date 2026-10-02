@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Runtime
+config/settings.json
+config/settings.*.tmp
+
+# 生成的截图等临时产物（.workbuddy/memory 里的项目记忆要保留）
+.workbuddy/artifacts/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
