@@ -33,15 +33,15 @@ uv run boardgames --window 1000x640               # 强制窗口尺寸（小屏/
 uv run python scripts/benchmark_ai.py             # AI 性能基准
 ```
 
-无头截图（自检 / 看布局用）：
+离屏截图（自检 / 看布局用，不需要显示器）：
 
 ```bash
-uv run boardgames --headless --screenshot lobby.png --scene lobby
-uv run boardgames --headless --screenshot c4.png --game connect4 --scene match --demo 8 --hover drop
-uv run boardgames --headless --screenshot q.png  --game quoridor  --scene match --demo 6 --hover wall-h
-uv run boardgames --headless --screenshot aba.png --game abalone --scene match --demo 24 --hover aba-select
-uv run boardgames --headless --screenshot hive.png --game hive --scene match --demo 18 --hover hive-place
-uv run boardgames --headless --screenshot hive2.png --game hive --scene match --demo 18 --hover hive-select
+uv run boardgames --offscreen --screenshot lobby.png --scene lobby
+uv run boardgames --offscreen --screenshot c4.png --game connect4 --scene match --demo 8 --hover drop
+uv run boardgames --offscreen --screenshot q.png  --game quoridor  --scene match --demo 6 --hover wall-h
+uv run boardgames --offscreen --screenshot aba.png --game abalone --scene match --demo 24 --hover aba-select
+uv run boardgames --offscreen --screenshot hive.png --game hive --scene match --demo 18 --hover hive-place
+uv run boardgames --offscreen --screenshot hive2.png --game hive --scene match --demo 18 --hover hive-select
 ```
 
 昆虫棋的棋盘**没有边界**，所以截图前会自动把镜头拉回蜂巢（按 `F` 也是同一个动作）。
@@ -49,16 +49,92 @@ uv run boardgames --headless --screenshot hive2.png --game hive --scene match --
 > 窗口默认 1180×780，但会自动裁剪到不超过你的屏幕可用区域（小屏或高 DPI 缩放下也不会
 > 把底部按钮挤出去）。窗口可自由缩放，侧栏在小窗口下会自动收窄，侧栏内容可滚动。
 
+### 无边框窗口（`--frameless`，别名 `--headless`）
+
+**"无头"在这里指的是不要 pygame 那条系统标题栏** —— 窗口照常显示、照常能玩，
+只是把系统标题头换成程序自己画的一条。**默认就是开的**（设置里有开关，见下）：
+
+```bash
+uv run boardgames                # 默认：无边框（自绘标题栏）
+uv run boardgames --frameless    # 显式指定（--headless 是同一个开关的别名）
+uv run boardgames --windowed     # 用回系统标题栏
+```
+
+持久开关在侧栏 **「界面与操作」** 分组里的 **「无边框窗口」**（默认开；
+改完要**重启程序**才生效 —— 窗口是在进程启动时开的）。
+
+那条自绘标题栏（`ui/chrome.py`）补上了无边框之后本来会丢掉的四件事，
+少一件这模式就只是"更难用"而不是"更好看"：
+
+| 元素 | 作用 |
+|---|---|
+| 标题 | 跟随当前场景（"棋类游戏 · 昆虫棋"），与系统任务栏显示的一致 |
+| `—` 最小化 | `pygame.display.iconify()` |
+| `□` 全屏 / 还原 | 无边框没有"边框可贴"，所以"最大化"就等于全屏（`NOFRAME \| FULLSCREEN`） |
+| `×` 关闭 | 位置和交互都按系统按钮的习惯来（按下 + 松开都在按钮上才触发） |
+| 空白处按住拖动 | 移动窗口（当前只在 Windows 上实现，见下） |
+
+- 场景会**自动让出顶部那一条**（`window.content_rect`），卡片 / 棋盘不会被压住；
+- 标题栏只消费**落在自己那一条里**的鼠标事件，下面的棋盘照常响应；
+- 拖动借的是系统能力（`WM_NCLBUTTONDOWN` + `HTCAPTION`），只在 Windows 上有效；
+  别的平台拖不动，但三个按钮和快捷键都正常 —— **不会抛异常，也不会卡住**。
+- 不想用自绘标题栏就不传这个开关，走原来的系统窗口（`RESIZABLE`）。
+
+### 离屏模式（`--offscreen`）：完全不显示窗口
+
+给 CI / 容器 / 跑批用：切 SDL 的 dummy 视频驱动，**不开任何窗口**也把主循环跑完。
+不传这个开关但窗口就是开不出来时（没有 `DISPLAY`、远程桌面断开），程序也会**自动**
+降级到它，而不是抛 `No available video device` 崩掉。
+
+```bash
+uv run boardgames --game hive --scene match --mode eve --offscreen --until-over
+uv run boardgames --game quoridor --offscreen --until-over --timeout 300   # 调大真实时间上限
+uv run boardgames --offscreen --frames 300 --screenshot out.png            # 跑固定帧数
+```
+
+- `--until-over`：一直跑到**分出胜负**再退出（会自动解除自对弈的暂停、关掉动画，
+  并把帧率限制放开）。默认真实时间上限 600s，可用 `--timeout` 调。结束时打印终局文案。
+- `--fast-ai`：把 AI 调成演示速度（每步约 0.3s，不写回配置文件），配合 `--until-over`
+  才等得起一局。
+- `--frames N`：跑固定帧数后退出。不指定时离屏模式会提示这几个选项。
+
 ---
 
 ## 游戏选择大厅
 
-启动后先进大厅：**一张卡片一个游戏**，含示意图标、玩法要点，鼠标悬停高亮、点击进入对局。
+启动后先进大厅：**一张卡片一个游戏**。卡片上只放四样东西 —— 图标、名称、
+副标题（`Quoridor · 墙棋`）和一行简介；完整的规则在卡片底部的 **「规则说明」** 里
+（点卡片本体才是进对局）。
 
-- 也支持键盘：`←↑↓→` 选择、`Enter` 确认、`Esc` 退出。
-- **卡片数据来自代码**：每个 `Game` 类自带 `tagline` / `summary` / `rules` / `icon` 元数据，
-  大厅遍历注册表自动生成 —— **以后接第四个棋类，大厅这边零改动**。
+- 也支持键盘：`←↑↓→` 选择、`Enter` 进入、`R` 看规则、`Esc` 退出。
+- **卡片数据来自代码**：每个 `Game` 类自带 `tagline` / `summary` / `rules` / `howto` /
+  `tips` / `icon` 等元数据，大厅遍历注册表自动生成 —— **以后接第五个棋类，大厅这边零改动**。
 - 窗口小到放不下时会自动启用滚轮。
+
+**图标是"一局棋里的一个瞬间"**，不是抽象的棋盘网格 —— 一眼能看出这个棋在玩什么：
+
+| 棋类 | 图标画的是什么 |
+|---|---|
+| 步步为营 | 己子被一面墙挡在正前方，只能走直角折线绕过去；上下两条底线是双方的目标 |
+| 重力四子棋 | 底行已经三连、第四格是虚线落点预览（再落一子就赢），最左一列两子叠着表示重力 |
+| 大力士棋 | 一盘残局：盘上双方都还剩一批子，盘外躺着一枚已经出局的；中央三枚正把对手顶向虚线边界 |
+| 昆虫棋 | 蜂后被围满五面、缺口那面闪着绿色虚线，外围虚线格表示棋盘还能往外长 |
+
+### 规则说明
+
+大厅每张卡片底部的 **「规则说明」** 按钮、以及**对局中棋盘右上角**的同一个按钮
+（快捷键 `H` / `?`）都会打开同一块浮层，正文全部来自 `Game` 的元数据：
+
+| 小节 | 来源 |
+|---|---|
+| 目标 | `Game.goal`（一句话胜负条件） |
+| 简介 | `Game.summary` |
+| 规则 | `Game.rules`（**写完整规则**，这里可滚动，不受卡片空间限制） |
+| 操作 | `Game.howto`（鼠标 / 键盘怎么下） |
+| 提示 | `Game.tips`（上手小贴士，可为空） |
+
+浮层是**模态**的：开着的时候吃掉全部事件，棋盘和侧栏都不响应；`滚轮` 翻页、
+`Esc` / `空格` / 点遮罩 / 点「关闭」都能关掉。窗口再小，卡片也保证 ≥320px 宽并且整块在屏幕内。
 
 ---
 
@@ -187,7 +263,7 @@ uv run boardgames --headless --screenshot hive2.png --game hive --scene match --
 
 ## 操作
 
-**全程鼠标**。
+**全程鼠标**。任何时候按 `H`（或点棋盘右上角的「规则说明」）都能叫出这个棋类的完整规则。
 
 **步步为营**靠右键切换的「放墙模式」区分两种操作：
 
@@ -196,7 +272,7 @@ uv run boardgames --headless --screenshot hive2.png --game hive --scene match --
 | **走子模式**（默认） | 高亮合法落点（含跳跃落点） | 移动棋子 |
 | **放墙模式**（右键进入） | 吸附到最近的内部网格交点，画出幽灵墙：**绿色可放 / 红色不可放** | 放置该墙 |
 
-- **右键**开 / 关放墙模式；**放下一面墙后会自动退出**（一回合本来就只放一面墙）。
+- **右键**（或 `W`）开 / 关放墙模式；**放下一面墙后会自动退出**（一回合本来就只放一面墙）。
 - 放墙模式下**四个格子的公共交点同样有提示**。
 - 横向 / 竖向的判定带有**滞回**：在某个交点选定了朝向之后，鼠标轻微抖动不会换朝向；
   只有明显朝另一条网格线移动才会切换，所以预览不会在横竖之间乱跳。想手动换朝向按 `V`。
@@ -244,13 +320,15 @@ uv run boardgames --headless --screenshot hive2.png --game hive --scene match --
 |---|---|
 | `U` | 悔棋 |
 | `N` | 新局 |
-| `R` | 认输 |
+| `R` | 认输（在大厅里是"看规则"，两边不冲突） |
+| `H` / `?` | 打开当前棋类的**规则说明**浮层（对局与大厅都可用） |
 | `F` | 镜头回到蜂巢（**仅昆虫棋**，其余棋类没有摄像机） |
+| `W` | 开 / 关放墙模式（仅墙棋，等价于右键） |
 | `V` | 放墙模式下切换横 / 竖朝向（仅墙棋；大力士棋、昆虫棋没有放置模式） |
 | `空格` | 暂停 / 继续（AI 自对弈） |
 | `S` | 自对弈单步 |
 | `1`~`8` | 选中手牌条第 N 种虫（**仅昆虫棋**；再按一次取消） |
-| `Esc` | **分级**：取消当前选择 → 退出放墙模式 → 回大厅 → （在大厅里）退出程序 |
+| `Esc` | **分级**：关规则浮层 → 取消当前选择 → 退出放墙模式 → 回大厅 → （在大厅里）退出程序 |
 
 ### AI 自对弈：默认暂停 + 单步
 
@@ -347,12 +425,14 @@ src/boardgames/
 ├── settings/              # ParamSpec 参数描述 + JSON 持久化
 └── ui/
     ├── scene.py           # 场景协议
-    ├── window.py          # 窗口宿主：主循环 + 场景切换
-    ├── lobby.py           # 游戏选择大厅
+    ├── window.py          # 窗口宿主：主循环 + 场景切换 + 无边框 / 离屏
+    ├── chrome.py          # 无边框窗口的自绘标题栏（关闭 / 全屏 / 最小化 / 拖动）
+    ├── lobby.py           # 游戏选择大厅（卡片 + 情境图标 + 规则说明入口）
+    ├── rules_panel.py     # 规则说明浮层（大厅与对局共用，正文来自 Game 元数据）
     ├── match_scene.py     # 对局场景：棋盘 + 侧栏 + AI 调度 + 结算浮层
     ├── camera.py          # 摄像机：无边界棋盘的平移 / 缩放 / 自动适配
     └── theme / fonts / render / animation / board_view 协议 / widgets / sidebar
-tests/                     # 623 项：规则、AI 契约、参数、无头 UI 冒烟（含像素断言）
+tests/                     # 694 项：规则、AI 契约、参数、UI 冒烟（含像素断言）
 scripts/benchmark_ai.py    # AI 性能与强度基准
 scripts/fetch_hive_assets.py  # 昆虫棋素材下载脚本（OpenMoji CC0，离线可重跑）
 ```
@@ -385,9 +465,16 @@ scripts/fetch_hive_assets.py  # 昆虫棋素材下载脚本（OpenMoji CC0，离
        settings_map = {"connect4_cols": "cols", "connect4_rows": "rows"}
        tagline = "Connect Four · 重力落子"
        summary = "在 7×6 的棋盘上轮流投子……"
-       rules = ("任选一列投子……", "横/竖/斜任一方向连续四子即胜", "……")
+       goal = "横、竖、斜任一方向先连成四子"          # 规则说明的「目标」
+       rules = ("任选一列投子……", "……", "……")     # 「规则」：写完整，浮层可滚动
+       howto = ("鼠标移到某一列会显示落点预览，点击投子", "……")   # 「操作」
+       tips = ("先手占住中间列通常最划算",)          # 「提示」，可留空
        icon = "drop"     # "board" | "drop" | "dots" | "hex" | "hive"
    ```
+
+   这些元数据**同时供大厅卡片与规则说明浮层使用**：卡片上只取 `display_name` /
+   `tagline` / `summary` 一行，`rules` / `howto` / `tips` 全部进浮层。
+   所以 `rules` 请按"写给玩家看的完整规则"来写，不用迁就卡片的行数。
 
    `settings_map` 是 **settings 键 → 构造参数名** 的映射，`GameSession` 靠它注入侧栏参数。
 
@@ -435,10 +522,10 @@ scripts/fetch_hive_assets.py  # 昆虫棋素材下载脚本（OpenMoji CC0，离
 ## 测试
 
 ```bash
-uv run pytest              # 全部（623 项）
+uv run pytest              # 全部（694 项）
 uv run pytest tests/games  # 只跑规则
 uv run pytest tests/ai     # 只跑 AI 契约
-uv run pytest tests/ui     # 无头 UI 冒烟（用 SDL dummy 驱动，不需要显示器）
+uv run pytest tests/ui     # UI 冒烟（用 SDL dummy 驱动，不需要显示器）
 ```
 
 覆盖重点：放墙合法性（越界 / 重叠 / 交叉 / L·T 合法 / 双人连通性）、跳跃全分支、
@@ -452,6 +539,15 @@ rollout 对局必然收敛、鼠标悬停不会折叠分组、AI 等待落子期
 六边形的上下/左右朝向、**画一帧再取像素**验证棋子颜色（玩家号 0/1 的索引
 写成棋子值 1/2 会 `IndexError`）、目标格提示确实画在棋子之上、
 滑行动画首帧的位置、开局着法数 44 / 52 / 80、推挤规则逐条、评估反对称 400 步无违例。
+
+**大厅 / 规则浮层 / 无边框窗口**另有一批：
+
+- 图标做**像素级断言** —— "四子棋图标上方不许有棋子"（这条正好抓住了"棋子悬在线盘上方"
+  那一版）、"大力士棋盘上至少 N 枚子"（数的是独立色块，所以能真的抓到"只有四枚子"）；
+- 规则浮层：卡片按钮不会误进对局、开着时是模态的（点棋盘不走子、点卡片不切场景）、
+  `Esc` 关浮层不会顺手退出程序、四种分辨率下卡片都完整在屏幕内；
+- 四个棋类都必须写全 `goal` / `rules` / `howto`（缺一个就红）；
+- 无边框：场景让出标题栏那一条、关闭按钮真的能退出、标题栏**只**吃自己那一条里的鼠标事件。
 
 **昆虫棋**继承了同一套思路，并补上它独有的三类用例：
 
@@ -509,5 +605,12 @@ rollout 对局必然收敛、鼠标悬停不会折叠分组、AI 等待落子期
   （六边形几何是纯数学，放在 `games/abalone/geometry.py`，不碰 pygame。）
 - **场景用转发 property 兼容旧测试**：`GameWindow` 暴露 `session` / `view` / `_update()` 等，
   转发给当前的 `MatchScene`，因此既有测试一行都不用改。
+- **"无边框"和"不显示窗口"是两个开关**：前者是 `--frameless`（`NOFRAME` + 自绘标题栏，
+  窗口照常能玩），后者是 `--offscreen`（dummy 驱动，给 CI 用）。一开始把二者混成一个
+  "无头"，结果是想去掉标题栏的人得到了一个看不见的窗口。
+- **卡片只放三行字，规则全进浮层**：卡片空间有限，塞进去的规则必然是删减版，
+  而删减过的规则等于没规则。规则写全、可滚动，卡片只负责"让你认出这是什么棋"。
+- **图标画的是局面而不是棋盘**：抽象棋盘网格（点阵 / 空板）在 96px 里辨识度极低，
+  而"三连 + 空一格"、"三推一顶向界外"这类局面切片一眼就能读懂玩法。
 - **AI 用线程而不是进程**：纯 Python 搜索会与主循环争 GIL，但主循环大部分时间在等待，
   实测 60 FPS 稳定。引擎接口只传可序列化数据，将来要换 `multiprocessing` 成本很低。

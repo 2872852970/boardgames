@@ -13,10 +13,11 @@
 
 ```bash
 uv sync && uv run boardgames            # 启动（先进大厅）
-uv run pytest                           # 全部（659 passed / 11 skipped）
+uv run pytest                           # 全部（694 passed / 11 skipped）
 uv run ruff check src tests scripts     # 必须 All checks passed
 uv run boardgames --game hive           # 也可 --game connect4 / abalone / quoridor
-uv run boardgames --scene match --headless --frames 5 --screenshot out.png   # 无头截图
+uv run boardgames --scene match --offscreen --frames 5 --screenshot out.png  # 离屏（无窗口）
+uv run boardgames --frameless                                               # 无边框（= 无系统标题栏）
 uv run boardgames --hover wall-h --scene match   # 模拟悬停（大力士棋 --hover aba-select、
                                                  # 昆虫棋 --hover hive-place / hive-select）
 uv run boardgames --window 1000x640     # 强制窗口尺寸调试布局
@@ -73,6 +74,24 @@ git 分支 `master`。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/
 10. **侧栏"虚拟控件"不进 `SPECS` 也就不该问 `settings.get()`**：人机对战的两个
     控件（`pve_side` / `pve_ai`，见 `ui/sidebar.py`）只是 `p1_type` / `p2_type` 的
     另一种说法，`sync_from_settings()` 必须显式跳过它们，否则抛 KeyError。
+11. **"无边框"和"不显示窗口"是两个开关，别混**：
+    `--frameless`（`GameWindow(frameless=True)`，`pygame.NOFRAME` + 自绘标题栏
+    `ui/chrome.py`，窗口照常能玩）才是用户说的"无头（无 pygame 标题头）"；
+    `--offscreen`（dummy 驱动）是给 CI / 跑批用的。混成一个的后果是
+    "想去掉标题栏的人得到了一个看不见的窗口"。
+    - 无边框下场景必须用 `window.content_rect`（顶部让出 `TITLEBAR_H`）；
+    - `TitleBar.handle_event` **只吃落在自己那一条里的鼠标事件**，其余放行给场景；
+    - `_flags()` 会被 `_open_screen()` 调用，所以 `self.titlebar` 必须在开窗口**之前**置好。
+12. **`Game` 上的 UI 元数据一律 `getattr` 取**：`goal` / `summary` / `rules` / `howto` /
+    `tips` / `tagline` / `display_name` 都是可选 ClassVar，规则浮层缺一个就该降级显示，
+    不能崩。四个棋类都要写全（`tests/ui/test_lobby.py::test_every_game_has_a_readable_rulebook`
+    和 `tests/ui/test_rules_panel.py::test_sections_cover_the_whole_rulebook` 锁着）。
+13. **大厅卡片只放"图标 + 名称 + 副标题 + 一行简介"**，完整规则进
+    `ui/rules_panel.py` 的浮层（大厅与对局共用同一个 `RulesOverlay` 实例持有方式）。
+    卡片上的图标是**局面切片**而不是抽象棋盘网格 —— 像素级回归在
+    `test_lobby.py::test_connect4_icon_keeps_every_piece_on_the_board`
+    （"落点不许画成一枚悬在线盘上方的子"）和 `test_abalone_icon_shows_a_crowd_of_marbles`
+    （数独立色块，抓"盘上只剩四枚子"）。
 
 ## 昆虫棋独有（详见 `details/hive.md`）
 

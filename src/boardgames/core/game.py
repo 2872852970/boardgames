@@ -53,13 +53,22 @@ class Game[S: State, M: Move](ABC):
     #: ``ai.engine``，core 再反向 import 会成环。
     settings_map: ClassVar[Mapping[str, str]] = {}
 
-    # ---- 大厅卡片元数据（纯数据，供游戏选择大厅使用） ----
+    # ---- 大厅卡片 / 规则说明的元数据（纯数据，由 UI 负责绘制） ----
     #: 副标题，例如 ``"Quoridor · 墙棋"``。
     tagline: ClassVar[str] = ""
     #: 一句话简介。
     summary: ClassVar[str] = ""
     #: 玩法要点（每条一行）。
+    #:
+    #: **写完整个规则**，别按卡片能放几行来裁 —— 卡片上只显示 ``summary``，
+    #: 这些条目是「规则说明」浮层的正文（可滚动）。
     rules: ClassVar[tuple[str, ...]] = ()
+    #: 一句话胜负条件（规则说明的「目标」一行）。
+    goal: ClassVar[str] = ""
+    #: 操作方式（鼠标 / 键盘怎么下），规则说明的「操作」一节。
+    howto: ClassVar[tuple[str, ...]] = ()
+    #: 上手提示（规则说明的「提示」一节，可为空）。
+    tips: ClassVar[tuple[str, ...]] = ()
     #: 卡片图标样式：``"board"`` / ``"drop"`` / ``"dots"``（由大厅负责绘制）。
     icon: ClassVar[str] = "dots"
 

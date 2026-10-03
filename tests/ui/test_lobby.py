@@ -9,7 +9,11 @@
 from __future__ import annotations
 
 import pygame
-from helpers import key_event, press
+from helpers import key_event, press, release
+
+from boardgames.ui import theme
+from boardgames.ui.lobby import ICON_H
+from boardgames.ui.rules_panel import rules_sections
 
 
 def _lobby_window(make_window, **overrides):
@@ -313,3 +317,148 @@ def test_sidebar_shows_connect4_eval_weights(make_window):
 
 def sidebar_widgets(window, section):
     return window.sidebar._section_widgets(section)
+
+
+# --------------------------------------------------------------------------- #
+# 卡片图标：一局棋里的一个瞬间
+# --------------------------------------------------------------------------- #
+
+def _icon_surface(window, kind: str, pad: int = 48):
+    """把某个图标单独画在一块留了边距的表面上，便于做像素级断言。"""
+    width = 240
+    surface = pygame.Surface((width, ICON_H + pad * 2))
+    surface.fill((0, 0, 0))
+    rect = pygame.Rect(0, pad, width, ICON_H)
+    window.lobby._draw_icon(surface, rect, kind)
+    return surface, rect
+
+
+def _blobs(surface: pygame.Surface, colors) -> int:
+    """数出某种颜色的独立色块个数 —— 图标里的"棋子"就是这种块。"""
+    wanted = {tuple(color[:3]) for color in colors}
+    width, height = surface.get_size()
+    mask = [
+        [tuple(surface.get_at((x, y)))[:3] in wanted for x in range(width)]
+        for y in range(height)
+    ]
+    seen = [[False] * width for _ in range(height)]
+    count = 0
+    for y in range(height):
+        for x in range(width):
+            if not mask[y][x] or seen[y][x]:
+                continue
+            count += 1
+            seen[y][x] = True
+            stack = [(x, y)]
+            while stack:
+                cx, cy = stack.pop()
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if 0 <= nx < width and 0 <= ny < height and mask[ny][nx] and not seen[ny][nx]:
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+    return count
+
+
+def test_connect4_icon_keeps_every_piece_on_the_board(make_window):
+    """落点用"格子里的虚线预览"表示，不许再悬一枚子在线盘上方。"""
+    window = _lobby_window(make_window)
+    surface, rect = _icon_surface(window, "drop")
+    player_colors = (*theme.PLAYER_COLORS, *theme.PLAYER_DARK)
+    above = surface.subsurface(pygame.Rect(0, 0, surface.get_width(), rect.top))
+    assert _blobs(above, player_colors) == 0, "四子棋图标上方不该有棋子"
+    assert _blobs(surface.subsurface(rect), theme.PLAYER_COLORS) >= 5, "棋盘上应当有棋子"
+
+
+def test_abalone_icon_shows_a_crowd_of_marbles(make_window):
+    """残局的样子：盘上双方都还剩一批子，不是光秃秃四个。"""
+    window = _lobby_window(make_window)
+    surface, rect = _icon_surface(window, "hex")
+    board = surface.subsurface(rect)
+    own = _blobs(board, [theme.PLAYER_COLORS[0]])
+    rival = _blobs(board, [theme.PLAYER_COLORS[1]])
+    assert own >= 5, f"己方只画了 {own} 枚，太少了"
+    assert rival >= 3, f"对方只画了 {rival} 枚，太少了"
+
+
+def test_every_icon_draws_something(make_window):
+    window = _lobby_window(make_window)
+    for kind in ("board", "drop", "hex", "hive", "dots"):
+        surface, rect = _icon_surface(window, kind)
+        board = surface.subsurface(rect)
+        painted = [
+            board.get_at((x, y))[:3]
+            for y in range(0, rect.height, 3)
+            for x in range(0, rect.width, 3)
+        ]
+        assert any(color != (0, 0, 0) for color in painted), f"{kind} 图标什么都没画"
+
+
+# --------------------------------------------------------------------------- #
+# 卡片上的「规则说明」按钮
+# --------------------------------------------------------------------------- #
+
+def test_every_card_has_a_rules_button_in_its_lower_half(make_window):
+    window = _lobby_window(make_window)
+    for card in window.lobby._cards:
+        assert card.rect.contains(card.rules_rect), f"{card.game.key} 的规则按钮跑出卡片了"
+        assert card.rules_rect.top > card.rect.centery, f"{card.game.key} 的规则按钮不在下半部"
+
+
+def test_clicking_the_rules_button_opens_the_panel_without_entering(make_window):
+    window = _lobby_window(make_window)
+    card = window.lobby._cards[2]
+    pygame.event.post(press(card.rules_rect.center))
+    pygame.event.post(release(card.rules_rect.center))
+    window._handle_events()
+
+    assert window.scene is window.lobby, "点「规则说明」不该直接进对局"
+    assert window.lobby.rules.open
+    assert window.lobby.rules.game.key == card.game.key
+
+
+def test_rules_panel_is_modal_while_open(make_window):
+    window = _lobby_window(make_window)
+    window.lobby._open_rules(0)
+    other = window.lobby._cards[3]
+    pygame.event.post(press(other.rect.center))
+    window._handle_events()
+
+    assert window.scene is window.lobby
+    assert window.lobby.rules.open, "浮层开着时点卡片不该关掉它，也不该进对局"
+
+
+def test_rules_panel_closes_on_escape(make_window):
+    window = _lobby_window(make_window)
+    window.lobby._open_rules(1)
+    pygame.event.post(key_event(pygame.K_ESCAPE))
+    window._handle_events()
+    assert not window.lobby.rules.open
+    assert window.running is True, "Esc 关浮层不该顺手把程序也退了"
+
+
+def test_rules_panel_closes_on_clicking_the_veil(make_window):
+    window = _lobby_window(make_window)
+    window.lobby._open_rules(1)
+    pygame.event.post(press((6, 6)))
+    window._handle_events()
+    assert not window.lobby.rules.open
+
+
+def test_r_key_opens_the_rules_of_the_focused_card(make_window):
+    window = _lobby_window(make_window)
+    window.lobby._focus = 2
+    pygame.event.post(key_event(pygame.K_r))
+    window._handle_events()
+    assert window.lobby.rules.open
+    assert window.lobby.rules.game.key == window.lobby._cards[2].game.key
+
+
+def test_every_game_has_a_readable_rulebook(make_window):
+    """规则说明的正文来自 Game 的元数据 —— 四个棋类都得写全。"""
+    window = _lobby_window(make_window)
+    for card in window.lobby._cards:
+        titles = [title for title, _ in rules_sections(card.game)]
+        assert "目标" in titles, f"{card.game.key} 没写 goal"
+        assert "规则" in titles, f"{card.game.key} 没写 rules"
+        assert "操作" in titles, f"{card.game.key} 没写 howto"
+        assert len(card.game.rules) >= 4, f"{card.game.key} 的规则条目太少"

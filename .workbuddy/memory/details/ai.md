@@ -57,11 +57,11 @@
 - 大力士棋的 rollout 必须**强烈偏向推挤**（90% 直接取能挤出的着法），
   否则纯随机走 300 手双方各只挤出 1~2 枚，价值信号全指望评估函数。
 
-## 无头冒烟 / 调试命令
+## 离屏冒烟 / 调试命令
 
 ```bash
-uv run boardgames --headless --screenshot out.png --demo 20 --scene match   # 拍中局
-uv run boardgames --headless --screenshot lobby.png --scene lobby           # 拍大厅
+uv run boardgames --offscreen --screenshot out.png --demo 20 --scene match   # 拍中局
+uv run boardgames --offscreen --screenshot lobby.png --scene lobby           # 拍大厅
 uv run boardgames --window 1000x640                                        # 调试布局
 uv run boardgames --hover wall-h --scene match                             # 模拟悬停（按棋类分派）
 uv run boardgames --hover aba-select --game abalone --scene match          # 大力士棋：选中+悬停

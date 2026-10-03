@@ -32,7 +32,7 @@ def make_window(tmp_path):
         settings = Settings(tmp_path / "settings.json")
         for key, value in overrides.items():
             settings.values[key] = value
-        window = GameWindow(settings, build_registry(), headless=True, **window_kwargs)
+        window = GameWindow(settings, build_registry(), offscreen=True, **window_kwargs)
         created.append(window)
         return window
 

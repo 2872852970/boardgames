@@ -112,7 +112,7 @@ MCTS 建议只当陪练；`p_hive_place`（rollout 放置概率，默认 0.55）
 ## 截图 / 自查
 
 ```bash
-uv run boardgames --game hive --scene match --mode pvp --headless --demo 16 \
+uv run boardgames --game hive --scene match --mode pvp --offscreen --demo 16 \
   --hover hive-place --screenshot .workbuddy/artifacts/hive_place.png
 ```
 

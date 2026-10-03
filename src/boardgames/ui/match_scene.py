@@ -37,6 +37,7 @@ from boardgames.ui.animation import Tween, ease_out_cubic
 from boardgames.ui.board_view import PLACEMENT_MODE_KEY, ViewState
 from boardgames.ui.camera import CLICK, CONSUME, CameraController
 from boardgames.ui.fonts import FontBook
+from boardgames.ui.rules_panel import RulesOverlay
 from boardgames.ui.sidebar import Sidebar, Status
 from boardgames.ui.widgets import Button
 
@@ -51,6 +52,8 @@ MODE_KEYS = {"mode", "p1_type", "p2_type", "first_player"}
 #: 这些参数一改就让正在思考的 AI 重新思考。
 #: ``"p_"`` 同时覆盖墙棋的 ``p_wall`` 与昆虫棋的 ``p_hive_place``（都是 rollout 偏好）
 AI_KEYS_PREFIX = ("minimax_", "mcts_", "w_", "p_", "ai_seed")
+#: 棋盘右上角「规则说明」按钮的宽度
+RULES_BUTTON_W = 92
 
 
 class _Toast:
@@ -108,6 +111,10 @@ class MatchScene:
             Button("再来一局", lambda: self._on_action("new_game", None), variant="primary"),
             Button("悔棋", lambda: self._on_action("undo", None)),
         ]
+        # 规则说明：大厅能开，对局里也得能开 —— 下到一半忘了规则是最常见的场景。
+        # 同一个浮层组件，谁都能持有一个实例。
+        self.rules = RulesOverlay()
+        self._rules_button = Button("规则说明", self._open_rules)
         self._apply_view_flags()
 
     # ------------------------------------------------------------------ #
@@ -120,6 +127,7 @@ class MatchScene:
     def on_exit(self) -> None:
         # 必须停掉后台 AI 线程：否则它会继续跑并持有旧局面的引用
         self.session.cancel_thinking()
+        self.rules.close()
 
     def layout(self, area: pygame.Rect) -> None:
         width, height = area.width, area.height
@@ -140,8 +148,13 @@ class MatchScene:
             self._cam.camera.set_viewport(viewport() if callable(viewport) else board_rect)
         self.board_area = pygame.Rect(0, 0, width - sidebar_w, height)
         self._layout_overlay_buttons()
+        self.rules.layout(pygame.Rect(0, 0, width, height))
 
     def handle_event(self, event: pygame.event.Event) -> bool:
+        # 规则浮层是模态的：开着的时候它吃掉全部事件，棋盘 / 侧栏都不再响应
+        if self.rules.open:
+            self.rules.handle_event(event)
+            return True
         if event.type == pygame.KEYDOWN:
             # 侧栏有输入框在编辑时，键盘先给它（避免 Esc/N/U 误触发）
             if not self.sidebar.handle_key(event):
@@ -174,6 +187,8 @@ class MatchScene:
         for button in self._overlay_buttons:
             button.visible = session.is_over
             button.update(dt_ms, mouse)
+        self._rules_button.update(dt_ms, mouse)
+        self.rules.update(dt_ms, mouse)
 
     def draw(self, surface: pygame.Surface, fonts: FontBook) -> None:
         surface.fill(theme.BG)
@@ -189,6 +204,8 @@ class MatchScene:
             self._draw_result_overlay(surface, fonts)
         self.sidebar.draw(surface, fonts)
         self._draw_toast(surface, fonts)
+        self._rules_button.draw(surface, fonts)
+        self.rules.draw(surface, fonts)
 
     # ------------------------------------------------------------------ #
     # 内部工具
@@ -301,6 +318,13 @@ class MatchScene:
         top = center[1] + 44
         self._overlay_buttons[0].layout(pygame.Rect(left, top, w, h))
         self._overlay_buttons[1].layout(pygame.Rect(left + w + gap, top, w, h))
+        # 「规则说明」固定在棋盘右上角：左上角是悬停提示胶囊，底部是手牌条 / 提示行
+        self._rules_button.layout(
+            pygame.Rect(area.right - 18 - RULES_BUTTON_W, area.y + 14, RULES_BUTTON_W, 30)
+        )
+
+    def _open_rules(self) -> None:
+        self.rules.show(self.session.game)
 
     # ------------------------------------------------------------------ #
     # 侧栏回调
@@ -394,6 +418,9 @@ class MatchScene:
             orient = self.view.flip_orientation()
             self.toast.show("换成" + ("横墙" if orient == "h" else "竖墙"))
             self._refresh_hover()
+        elif event.key == pygame.K_w and self._place_mode_supported():
+            # W = Wall：与右键等价的键盘入口（右键还要兼职"取消选择"）
+            self._toggle_wall_mode()
         elif event.key == pygame.K_n:
             self._on_action("new_game", None)
         elif event.key == pygame.K_u:
@@ -409,6 +436,8 @@ class MatchScene:
             self._on_action("toggle_pause", None)
         elif event.key == pygame.K_f and self._cam is not None:
             self._fit_camera()
+        elif event.key in (pygame.K_h, pygame.K_SLASH):
+            self._open_rules()
 
     def _clear_selection(self) -> bool:
         """放下当前"举着的东西"（手牌虫种 / 盘上棋子），返回是否真的放下了。
@@ -472,6 +501,9 @@ class MatchScene:
         return True
 
     def _handle_pointer(self, event: pygame.event.Event) -> None:
+        if self._rules_button.handle_event(event):
+            return
+
         if self.session.is_over:
             for button in self._overlay_buttons:
                 if button.handle_event(event):
@@ -644,9 +676,9 @@ class MatchScene:
         elif hasattr(self.view, "hud_hint"):
             tip = self.view.hud_hint(wall_mode=place_mode, paused=self.session.paused)
         elif place_mode:
-            tip = "放墙模式：移动鼠标预览（绿可放 / 红不可放），点击落墙；右键或 Esc 退出，V 换朝向"
+            tip = "放墙模式：移动鼠标预览（绿可放 / 红不可放），点击落墙；右键 / W / Esc 退出，V 换朝向"
         else:
-            tip = "点击高亮圆点走子；右键进入放墙模式"
+            tip = "点击高亮圆点走子；右键或 W 进入放墙模式（Esc 退出）"
         # 视图可以在底部留出自己的东西（昆虫棋的手牌条），提示得让开
         inset = self.view.hud_inset() if hasattr(self.view, "hud_inset") else 0
         render.text(

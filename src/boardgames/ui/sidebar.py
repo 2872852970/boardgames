@@ -138,8 +138,11 @@ class Sidebar:
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
+        # 「棋局设置」默认**展开**：它是唯一"改了就重开一局"的分组，也是玩家最常改的
+        # 那几个开关所在（对局模式、先手、昆虫棋的扩展虫、大力士棋的起始布局）。
+        # 折叠着的话，像"启用扩展虫"这种选项根本没人发现得了。
         expanded = {
-            "game": False,
+            "game": True,
             "players": True,
             "minimax": True,
             "mcts": True,
@@ -335,6 +338,13 @@ class Sidebar:
         return True
 
     def _widget_applicable(self, widget: Widget) -> bool:
+        # 「对局双方」按模式换一套控件（见模块文档）：人机对战问我执哪一方 +
+        # 电脑用哪个引擎，AI 自对弈才问双方各自的引擎。两套**互斥**，
+        # 否则侧栏里会同时冒出四个下拉，玩家不知道该改哪个。
+        if widget.key in {"p1_type", "p2_type"}:
+            return self._mode() == "eve"
+        if widget.key in {PVE_SIDE_KEY, PVE_AI_KEY}:
+            return self._mode() == "pve"
         spec = SPEC_BY_KEY.get(widget.key)
         return True if spec is None else self._spec_applicable(spec)
 
@@ -375,8 +385,11 @@ class Sidebar:
     def _open_dropdowns(self) -> list[Dropdown]:
         return [w for w in self._visible_widgets() if isinstance(w, Dropdown) and w.open]
 
+    def _mode(self) -> str:
+        return str(self.settings.get("mode"))
+
     def _is_eve(self) -> bool:
-        return str(self.settings.get("mode")) == "eve"
+        return self._mode() == "eve"
 
     # ------------------------------------------------------------------ #
     # 布局

@@ -137,7 +137,8 @@ def _specs() -> list[ParamSpec]:
                   games=H, hint="加瓢虫 / 蚊子 / 鼠妇各一枚；切换即开新局"),
         ParamSpec("mode", "对局模式", "choice", "pve", choices=MODES, group="game"),
         ParamSpec("first_player", "先手", "choice", "p1", choices=("p1", "p2", "random"),
-                  group="game", hint="数字版里的「石头剪刀布」"),
+                  group="game", hint="数字版里的「石头剪刀布」",
+                  choice_labels={"p1": "玩家 1 先手", "p2": "玩家 2 先手", "random": "随机"}),
         # ---------------- 双方 ----------------
         # 这两项只在「AI 自对弈」里露出来（人机对战走侧栏的"我执 / 电脑 AI"，
         # 见 ui/sidebar.py 的 PVE_SIDE_KEY / PVE_AI_KEY），所以默认值和候选里
@@ -217,6 +218,8 @@ def _specs() -> list[ParamSpec]:
                   group="eval", advanced=True, needs_engine="mcts", games=H,
                   hint="rollout 里优先放新虫的概率；太低会一直搬家不围后"),
         # ---------------- 界面 ----------------
+        ParamSpec("frameless_window", "无边框窗口（去掉系统标题栏）", "bool", True,
+                  group="ui", hint="改成自绘标题栏；与棋盘 / AI 无关，需要重启程序才生效"),
         ParamSpec("anim_ms", "动画时长 (ms)", "int", 140, 0, 600, 10, group="ui"),
         ParamSpec("c4_anim_ms", "落子动画 (ms)", "int", 850, 0, 2000, 50, group="ui",
                   games=C4, hint="重力下落 + 回弹的总时长"),

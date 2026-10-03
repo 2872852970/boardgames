@@ -128,3 +128,42 @@ def truncate(font: pygame.font.Font, content: str, max_width: int) -> str:
     while out and font.size(out + ellipsis)[0] > max_width:
         out = out[:-1]
     return out + ellipsis
+
+
+def wrap(font: pygame.font.Font, text: str, max_width: int) -> list[str]:
+    """按宽度折行（pygame 没有自动换行，项目里也没有别的折行工具）。
+
+    中文没有空格，逐字断行会把句末的「。」孤零零甩到下一行 ——
+    所以先尝试在标点处断开，找不到合适位置才逐字断。
+    """
+    if not text or font.size(text)[0] <= max_width:
+        return [text] if text else []
+    # 先在标点处切一刀，避免「。」独占一行
+    pieces: list[str] = []
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in "，。；、：！？」』）":
+            pieces.append(text[start:i + 1])
+            start = i + 1
+    if start < len(text):
+        pieces.append(text[start:])
+
+    lines: list[str] = []
+    current = ""
+    for piece in pieces:
+        if font.size(current + piece)[0] <= max_width:
+            current += piece
+            continue
+        if current:
+            lines.append(current)
+            current = ""
+        # 单个片段还是太宽（长英文词）→ 逐字断
+        for ch in piece:
+            if current and font.size(current + ch)[0] > max_width:
+                lines.append(current)
+                current = ch
+            else:
+                current += ch
+    if current:
+        lines.append(current)
+    return lines
