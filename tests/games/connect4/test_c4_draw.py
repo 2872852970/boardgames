@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from conftest import make_at
-
 from boardgames.games.connect4.state import Connect4State
+from conftest import make_at
 
 
 def _full_draw_state(cols: int, rows: int) -> Connect4State:

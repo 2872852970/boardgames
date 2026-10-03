@@ -9,7 +9,8 @@
 
 ## 快速开始
 
-需要 [uv](https://docs.astral.sh/uv/)（Python 3.13）。
+需要 [uv](https://docs.astral.sh/uv/) 与 **Python 3.10+**（`uv` 会按 `.python-version` 自动装好）。
+依赖只有一个 `pygame-ce`。
 
 **Windows：双击仓库根目录的 `boardgames.bat`。** 命令行等价写法：
 

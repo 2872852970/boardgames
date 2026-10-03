@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from conftest import make_at
-
 from boardgames.games.connect4.rules import Connect4Game
+from conftest import make_at
 
 
 def test_empty_board_counts_zero(game: Connect4Game):

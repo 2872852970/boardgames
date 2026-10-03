@@ -7,9 +7,8 @@
 
 from __future__ import annotations
 
-from conftest import make_at, make_state_with_winner
-
 from boardgames.games.connect4.state import scan_win
+from conftest import make_at, make_state_with_winner
 
 
 def test_horizontal_win_is_detected(game):

@@ -6,7 +6,12 @@
 
 ## 1. 安装与启动
 
-需要 [uv](https://docs.astral.sh/uv/)（Python 3.13）。依赖只有一个 `pygame-ce`。
+需要 [uv](https://docs.astral.sh/uv/)。**Python 版本：3.10 及以上**（项目就在 3.10 上开发；
+`uv` 会自动按 `.python-version` 装好对应版本）。依赖只有一个 `pygame-ce`。
+
+> 3.10 这条线是刻意选的：`dataclass(slots=True)`、`zip(strict=)`、`X | Y` 运行时联合类型
+> 都是 3.10 才有，而这三样在搜索热路径上天天用；pygame-ce 2.5.7+ 也要求 3.10。
+> 唯一用不了的是 PEP 695 泛型（要 3.12），所以代码里统一写 `TypeVar` + `Generic`。
 
 **Windows 上最简单的跑法：双击仓库根目录的 `boardgames.bat`**（内容就是 `uv run boardgames`）。
 
@@ -83,12 +88,17 @@ uv run boardgames --mode pvp --offscreen --screenshot hive.png --game hive --sce
 ## 6. 测试
 
 ```bash
-uv run pytest              # 全部
-uv run pytest tests/games  # 只跑规则
-uv run pytest tests/ai     # 只跑 AI 契约
-uv run pytest tests/ui     # UI 冒烟（SDL dummy 驱动，不需要显示器）
+uv run pytest                # 全部（约 45 秒）
+uv run pytest -m "not slow"  # 只跑快的：规则 / UI / 参数 / 设置（几秒）
+uv run pytest -m slow        # 只跑耗时的：AI 搜索契约、整局 rollout 收敛
+uv run pytest tests/games    # 只跑规则
+uv run pytest tests/ui       # UI 冒烟（SDL dummy 驱动，不需要显示器）
 uv run ruff check src tests scripts
 ```
+
+`tests/conftest.py` 会**按路径**给耗时用例自动打 `slow` 标记（跑真 AI 搜索的 `tests/ai/`、
+跑整局模拟的 `*rollout*`）。所以日常改一两个小地方时用 `-m "not slow"` 就够了 ——
+**只在动了规则、评估函数或引擎之后才需要跑全量**，别让每次微调都等上一轮 AI 对弈。
 
 覆盖重点与"为什么要这么测"见 [`ARCHITECTURE.md`](ARCHITECTURE.md) §8。
 

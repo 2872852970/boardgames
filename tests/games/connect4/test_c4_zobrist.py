@@ -6,9 +6,8 @@
 
 from __future__ import annotations
 
-from conftest import make_at
-
 from boardgames.games.connect4.state import Connect4State
+from conftest import make_at
 
 
 def _with_ply(state: Connect4State, ply: int) -> Connect4State:

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from conftest import make_at
-
 from boardgames.games.connect4.heuristic import center_weights, winning_columns
+from conftest import make_at
 
 
 def test_evaluate_is_zero_on_empty_board(game):

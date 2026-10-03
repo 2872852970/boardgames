@@ -281,11 +281,15 @@ def _player_details(self, state, walls) -> tuple[str, str]:
 
 ```bash
 uv run ruff check src tests scripts                  # 必须 All checks passed
-uv run pytest                                        # 全绿
+uv run pytest -m "not slow"                          # 先跑快的（几秒，改一点跑一次）
+uv run pytest                                        # 提交前跑全量（约 40 秒）
 uv run boardgames --game othello                     # 能进大厅 → 能进对局
 uv run boardgames --game othello --scene match --hover <你的悬停模式> --offscreen \
     --screenshot /tmp/o.png --demo 20                # 拍一张中局图看一眼
 ```
+
+> 跑真 AI 搜索与整局 rollout 的用例会自动打上 `slow`（见 `tests/conftest.py`），
+> 所以日常迭代用 `-m "not slow"`；**只有动到规则、评估函数或引擎时才跑全量**。
 
 ### 测试要写什么
 

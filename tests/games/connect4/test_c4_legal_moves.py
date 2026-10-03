@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from conftest import make_at
-
 from boardgames.core.game import SearchOptions
 from boardgames.games.connect4.move import DropMove
+from conftest import make_at
 
 
 def test_all_columns_legal_on_empty_board(game):

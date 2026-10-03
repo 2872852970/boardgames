@@ -283,12 +283,18 @@ animate(move, duration_ms) / update(dt_ms) / is_animating() / reset() / set_last
 ## 8. 测试体系
 
 ```
-uv run pytest              # 全部
-uv run pytest tests/games  # 只跑规则
-uv run pytest tests/ai     # 只跑 AI 契约
-uv run pytest tests/ui     # UI 冒烟（SDL dummy 驱动，不需要显示器）
+uv run pytest                # 全部（约 45 秒）
+uv run pytest -m "not slow"  # 只跑快的（几秒）—— 日常改动用它
+uv run pytest -m slow        # 只跑耗时的 —— 动了规则 / 评估 / 引擎时用它
+uv run pytest tests/games    # 只跑规则
+uv run pytest tests/ui       # UI 冒烟（SDL dummy 驱动，不需要显示器）
 uv run ruff check src tests scripts
 ```
+
+> **别每次小改动都跑全量。** `tests/conftest.py` 按路径给耗时用例自动打 `slow`
+> （`tests/ai/` 里跑真搜索的、以及所有 `*rollout*` 整局模拟）。
+> 改一两个小地方时 `-m "not slow"` 几秒就够；**只有改了规则、评估函数或 AI 引擎**
+> 才有必要等那 45 秒 —— 否则反馈周期被 AI 对弈拖长，反而更容易忽略真正的失败。
 
 - **规则测试**：逐条锁规则（合法性、边界、胜负、平局、哈希一致性、评估对称性）。
 - **AI 契约测试**：每个棋类都要过同一套 —— 永远返回合法着法、时限生效、可复现、
@@ -344,6 +350,17 @@ uv run ruff check src tests scripts
     `tips` / `tagline` 都是可选 ClassVar，缺一个该降级显示而不是崩。
 12. **播放动画拿到的永远是"走完之后"的局面**（先 `view.animate(move)` 再 `session.play(move)`），
     所以 Move 里给视图用的目标格信息必须是**目标格语义**，不能给源格。
+13. **别用 PEP 695 泛型语法**（`class Game[S: State, M: Move]`）—— 那是 **3.12** 才有的，
+    而本项目最低 3.10。`core/game.py` 用的是传统的 `TypeVar` + `Generic`：
+
+    ```python
+    S = TypeVar("S", bound=State)
+    M = TypeVar("M", bound=Move)
+
+    class Game(ABC, Generic[S, M]): ...
+    ```
+
+    （`dataclass(slots=True)`、`zip(strict=)`、`X | Y` 运行时联合类型都是 3.10 就有，随便用。）
 
 ---
 

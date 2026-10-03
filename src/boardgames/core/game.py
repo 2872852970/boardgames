@@ -6,7 +6,7 @@ import random
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Generic, TypeVar
 
 from boardgames.core.move import Move
 from boardgames.core.player import PlayerMeta
@@ -35,7 +35,14 @@ class SearchOptions:
 FULL_SEARCH = SearchOptions(max_branch=0, order=False)
 
 
-class Game[S: State, M: Move](ABC):
+#: 局面类型变量。用 ``TypeVar`` 而不是 PEP 695 的 ``class Game[S: State, ...]``，
+#: 是因为 PEP 695 语法要 Python 3.12 —— 本项目的最低支持版本是 3.7。
+S = TypeVar("S", bound=State)
+#: 着法类型变量。
+M = TypeVar("M", bound=Move)
+
+
+class Game(ABC, Generic[S, M]):
     """一个棋类的规则引擎。
 
     AI（Minimax / MCTS）只依赖本接口，因此接入新棋类时 **AI 侧零改动**。

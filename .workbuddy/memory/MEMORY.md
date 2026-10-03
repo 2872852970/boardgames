@@ -19,9 +19,12 @@
 
 ## 运行
 
+**Python 3.10+**（`.python-version` 钉住 3.10，uv 自动装）。依赖只有 `pygame-ce`。
+
 ```bash
 uv sync && uv run boardgames            # 启动（先进大厅）
-uv run pytest                           # 全部（804 passed / 11 skipped）
+uv run pytest -m "not slow"             # 快的（几秒）—— 日常改动跑这个
+uv run pytest                           # 全量（804 passed / 11 skipped，约 40s）
 uv run ruff check src tests scripts     # 必须 All checks passed
 uv run boardgames --game hive           # 也可 --game connect4 / abalone / quoridor
 uv run boardgames --scene match --offscreen --frames 5 --screenshot out.png  # 离屏（无窗口）
@@ -33,6 +36,15 @@ uv run boardgames --window 1000x640     # 强制窗口尺寸调试布局
 
 **昆虫棋截图必须加 `--mode pvp`**：落点提示挂在 `interactive` 上，`config/settings.json`
 里若存了 `mode=eve`，默认命令会拍到"一个落点都没有"的画面。
+
+**别每次小改动都跑全量测试**（用户明确要求）。`tests/conftest.py` 按路径给耗时用例打
+`slow`（`tests/ai/` 的搜索契约 + 所有 `*rollout*` 整局模拟），日常用 `-m "not slow"`；
+只有改了**规则 / 评估函数 / AI 引擎**才跑全量。
+
+**版本红线（最低 3.10）**：`dataclass(slots=True)`、`zip(strict=)`、`X | Y` 运行时联合
+都是 3.10 才有，随便用；**PEP 695 泛型 `class Game[S, M]` 要 3.12，不许用** ——
+`core/game.py` 用的是 `TypeVar` + `Generic`。（曾一路降到 3.7 试过，PEP 585 / 695 /
+slots / Protocol / Literal / dict `|` 全都要兜底，最后定在 3.10。）
 
 git 分支 `master`。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/`、
 `.workbuddy/tmp/` 已忽略；

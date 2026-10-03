@@ -1,10 +1,16 @@
 [project]
 name = "boardgames"
 version = "0.1.0"
-description = "可扩展的 Python 桌面棋类游戏框架 —— 首个游戏：步步为营（墙棋 / Quoridor）"
+description = "可扩展的 Python + Pygame 桌面棋类游戏框架（内置步步为营 / 四子棋 / 大力士棋 / 昆虫棋）"
 readme = "README.md"
-requires-python = ">=3.13"
+# 最低 3.10：``dataclass(slots=True)``、``zip(strict=)``、``X | Y`` 运行时联合类型
+# 都是 3.10 才有的，而这三样我们在搜索热路径上天天用。
+# 唯一的例外是 PEP 695 泛型（``class Game[S, M]``，要 3.12）—— 已改回
+# 传统的 ``TypeVar`` + ``Generic``，所以 3.10 / 3.11 也能跑。
+# 另外 pygame-ce 2.5.7+ 也要求 3.10，正好对齐。
+requires-python = ">=3.10"
 dependencies = [
+    # 不设上限：pip 会按当前解释器挑最高的兼容版本（3.10 → 2.5.6，3.11+ → 2.5.8）。
     "pygame-ce>=2.5.0",
 ]
 
@@ -28,12 +34,17 @@ packages = ["src/boardgames"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+markers = [
+    "slow: 跑真 AI 搜索 / 整局自对弈的耗时用例（改 AI 或规则时才需要跑）",
+]
 
 [tool.ruff]
 line-length = 110
 src = ["src", "tests"]
-target-version = "py313"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",   # 中文注释与表格按语义换行，不按字符数
+]
