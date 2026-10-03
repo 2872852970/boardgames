@@ -306,10 +306,12 @@ def test_sidebar_hides_connect4_only_params_for_quoridor(make_window):
     assert "c4_anim_ms" not in keys
 
 
-def test_sidebar_shows_connect4_eval_weights(make_window):
+def test_settings_panel_shows_connect4_eval_weights(make_window):
+    """评估权重已收进「设置」浮层，按棋类过滤照样生效。"""
     window = make_window(mode="pve", p1_type="human", p2_type="minimax", game_key="connect4")
     window._update(16.0)
-    keys = {w.key for s in window.sidebar._active_sections() for w in sidebar_widgets(window, s)}
+    window.settings_panel.show("connect4", window.session.resolved_player_types())
+    keys = {w.key for w in window.settings_panel._visible_widgets()}
     assert {"w_material", "w_center", "w_line", "w_threat"} <= keys
     assert "w_path" not in keys, "四子棋不该看到墙棋的「最短路径差」"
     assert "w_tempo" not in keys, "四子棋没有节奏项（会破坏评估对称性）"

@@ -11,14 +11,17 @@
 >
 > **对外文档在 `docs/`**（README 精简后长文都挪到了这里）：
 > `docs/ARCHITECTURE.md`（项目总结 / 架构总览 / 跨棋类坑清单）、
+> `docs/GAMEPLAY.md`（玩法 / 界面 / 操作 / 快捷键 / AI）、
+> `docs/USAGE.md`（CLI 参数 / 两个开关 / 离屏截图 / 测试命令 / 素材授权）、
 > `docs/ADDING_A_GAME.md`（新增棋类的实操步骤与代码模板）。
-> 改了框架契约或扩展点，这两个文件要同步更新。
+> README 只留：如何运行（双击 `boardgames.bat`）、主旨、四个游戏简介、项目结构、文档索引。
+> 改了框架契约或扩展点，ARCHITECTURE / ADDING_A_GAME 要同步更新。
 
 ## 运行
 
 ```bash
 uv sync && uv run boardgames            # 启动（先进大厅）
-uv run pytest                           # 全部（779 passed / 11 skipped）
+uv run pytest                           # 全部（801 passed / 11 skipped）
 uv run ruff check src tests scripts     # 必须 All checks passed
 uv run boardgames --game hive           # 也可 --game connect4 / abalone / quoridor
 uv run boardgames --scene match --offscreen --frames 5 --screenshot out.png  # 离屏（无窗口）
@@ -97,6 +100,27 @@ git 分支 `master`。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/
     `test_lobby.py::test_connect4_icon_keeps_every_piece_on_the_board`
     （"落点不许画成一枚悬在线盘上方的子"）和 `test_abalone_icon_shows_a_crowd_of_marbles`
     （数独立色块，抓"盘上只剩四枚子"）。
+14. **场景的 `layout(area)` 必须用传进来的 `area.x / area.y`，不许写死 0**。无边框窗口
+    把 `content_rect`（顶部让出 `TITLEBAR_H = 34`）交给场景，而标题栏是**最后**画的：
+    场景若从 y=0 铺开，侧栏顶部的游戏名 / 模式切换会被标题栏压掉一条
+    （`MatchScene.layout` 踩过；`tests/ui/test_chrome.py::
+    test_match_scene_also_stays_below_the_title_bar` 锁着）。
+15. **侧栏只放常用项，「评估权重 / 界面与操作」在 `ui/settings_panel.py`**：
+    - 分组的归属由 `sidebar.PANEL_GROUPS` 决定，控件工厂是模块级 `sidebar.build_widget()`
+      （侧栏与浮层共用，别再复制一份）；
+    - 浮层 `show(game_key, player_types)` 之后**必须重排**（按棋类过滤会改变可见集合）；
+    - 侧栏分组断言在 `test_window_smoke.py` / `test_hive_wiring.py` / `test_lobby.py`，
+      改分组要一起改。
+16. **"对局已开始"不能用 `bool(session.history)`** —— `history[0]` 是**初始快照**，
+    永远非空。正确的是 `session.can_undo()`（= `len(history) > 1`）或 `is_over`。
+    棋局设置（`game` 组）由此锁定：`widget.enabled = not status.started`，
+    并在 `_draw_content` 里压一层底色；标题旁写「已开始 · 开新局可改」。
+17. **新游戏一律回到「双人对战」**：复位发生在 `GameWindow.goto_match()`（从大厅进来 /
+    换棋类时 `settings.set("mode", "pvp")`），**不是** `MatchScene.__init__` ——
+    否则 CLI `--mode eve` 与测试夹具（直接构造窗口）会被悄悄改掉。
+18. **`MatchScene` 的三个模态浮层**（顺序即优先级）：`_confirm` → `rules` →
+    `settings_panel`，都在 `handle_event` 最前面拦一刀。二级确认只拦「新局 / 大厅」，
+    空棋盘与已终局直接执行；结算浮层的 `×` 只置 `_result_dismissed`，`_restart()` 里复位。
 
 ## 昆虫棋独有（详见 `details/hive.md`）
 

@@ -15,8 +15,13 @@
 ## 窗口与布局
 
 - **窗口尺寸必须裁剪到屏幕**（`ui.window.choose_window_size()`），否则小屏 / 高 DPI 下
-  底部"新局/悔棋/认输"会被裁掉。侧栏宽度也随窗口自适应（`SIDEBAR_W` → `SIDEBAR_MIN_W`，
+  底部按钮会被裁掉。侧栏宽度也随窗口自适应（`SIDEBAR_W` → `SIDEBAR_MIN_W`，
   最小值 316px）。
+- **场景布局必须用传进来的 `area.x / area.y`**，不要写死 `0`。无边框窗口把
+  `content_rect`（顶部让出 `TITLEBAR_H = 34`）传给场景，而标题栏是**最后**画的；
+  场景若从 y=0 开始铺，侧栏顶部的游戏名 / 模式切换会被标题栏压掉一条
+  （`MatchScene.layout` 曾踩过，现由 `tests/ui/test_chrome.py::
+  test_match_scene_also_stays_below_the_title_bar` 守着）。
 - 中文字体按**文件路径**加载并缓存。缺字陷阱：`▾/▸` 和 `▶`（U+25B6）在微软雅黑里没有，
   别用字形画箭头 —— 用 `pygame.draw.polygon` 画。`▼/▲` 是有的。
 - 面板类绘制顺序：内容 → 覆盖层（下拉弹层）最后画，并 `set_clip` 到面板矩形。

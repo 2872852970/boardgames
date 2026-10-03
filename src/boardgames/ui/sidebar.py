@@ -3,8 +3,13 @@
 面板结构（自上而下）：
 
 * 固定头部：游戏名 + 对局模式切换 + 回合指示
-* 可滚动区：双方信息、AI 状态、分组参数（**按当前模式自动精简**）
-* 固定底栏：新局 / 悔棋 /（自对弈时）暂停 / 认输
+* 可滚动区：**棋局设置**（全局公共选项，永远排第一、对局开始后锁定）、
+  AI 状态行、对局双方、引擎参数（**按当前模式自动精简**）
+* 固定底栏：新局 / 悔棋 /（自对弈时）暂停、单步 / 大厅 / 设置
+
+「评估权重」「界面与操作」这两组收在 :class:`~boardgames.ui.settings_panel.
+SettingsPanel` 里（底栏「设置」按钮打开）—— 它们是"调一次就不再碰"的参数，
+留在侧栏只会把常用项挤进滚动区。
 
 「按模式精简」规则：
 
@@ -66,6 +71,35 @@ PLAYER_ROW_H = 26
 PVE_SIDE_KEY = "pve_side"
 PVE_AI_KEY = "pve_ai"
 
+#: 收进「设置」浮层（:class:`boardgames.ui.settings_panel.SettingsPanel`）的分组。
+#: 这些是"调一次就不再碰"的参数，混在侧栏里只会把常用项挤进滚动区。
+PANEL_GROUPS: frozenset[str] = frozenset({"eval", "ui"})
+
+
+def build_widget(spec, value, on_setting, on_edit=None) -> Widget | None:
+    """按 :class:`ParamSpec` 造一个控件（侧栏与「设置」浮层共用）。"""
+    # 玩家类型历史上是写死在这里的；其余 choice 参数从 spec.choice_labels 取中文标签
+    labels = PLAYER_TYPE_LABELS if spec.key in {"p1_type", "p2_type"} else None
+    if labels is None and spec.choice_labels:
+        labels = dict(spec.choice_labels)
+    if spec.kind == "bool":
+        return Toggle(spec.key, spec.label, bool(value), on_setting)
+    if spec.kind == "int":
+        return Slider(
+            spec.key, spec.label, value,
+            spec.minimum or 0, spec.maximum or 0, spec.step or 1,
+            on_setting, fmt=lambda v: str(int(round(v))), on_edit=on_edit,
+        )
+    if spec.kind == "float":
+        return Slider(
+            spec.key, spec.label, value,
+            spec.minimum or 0, spec.maximum or 0, spec.step or 0.01,
+            on_setting, fmt=lambda v: f"{v:g}", on_edit=on_edit,
+        )
+    if spec.kind == "choice":
+        return Dropdown(spec.key, spec.label, value, spec.choices, on_setting, labels=labels)
+    return None
+
 
 @dataclass
 class Status:
@@ -85,6 +119,9 @@ class Status:
     is_over: bool = False
     paused: bool = False
     can_undo: bool = True
+    #: 对局是否**已经开始**（落过子或已终局）。开始后「棋局设置」整组锁定 ——
+    #: 这些选项决定棋局的初始构造，中途改只意味着"换一局重下"。
+    started: bool = False
     hint: str = ""
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -138,9 +175,9 @@ class Sidebar:
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
-        # 「棋局设置」默认**展开**：它是唯一"改了就重开一局"的分组，也是玩家最常改的
-        # 那几个开关所在（对局模式、先手、昆虫棋的扩展虫、大力士棋的起始布局）。
-        # 折叠着的话，像"启用扩展虫"这种选项根本没人发现得了。
+        # 「棋局设置」默认**展开**且排在滚动区**最上面**（见 _flow）：它是
+        # "改了就重开一局"的公共选项（对局模式、先手、昆虫棋的扩展虫、
+        # 大力士棋的起始布局），不折起来、也不许被 AI 状态行挤下去。
         expanded = {
             "game": True,
             "players": True,
@@ -153,7 +190,10 @@ class Sidebar:
         for spec in SPECS:
             if not spec.expose or spec.key == "mode":
                 continue  # mode 放在固定头部，不参与滚动区
-            widget = self._make_widget(spec)
+            if spec.group in PANEL_GROUPS:
+                continue  # 不常用参数收进「设置」浮层（ui/settings_panel.py）
+            widget = build_widget(spec, self.settings.get(spec.key),
+                                  self.on_setting, self._begin_edit)
             if widget is not None:
                 by_group[spec.group].append(widget)
 
@@ -187,32 +227,8 @@ class Sidebar:
             Button("单步", lambda: self.on_action("step", None), key="step"),
             Button("暂停", lambda: self.on_action("toggle_pause", None), key="pause"),
             Button("大厅", lambda: self.on_action("lobby", None), key="lobby"),
-            Button("认输", lambda: self.on_action("resign", None), variant="danger", key="resign"),
+            Button("设置", lambda: self.on_action("open_settings", None), key="settings"),
         ]
-
-    def _make_widget(self, spec) -> Widget | None:
-        value = self.settings.get(spec.key)
-        # 玩家类型历史上是写死在这里的；其余 choice 参数从 spec.choice_labels 取中文标签
-        labels = PLAYER_TYPE_LABELS if spec.key in {"p1_type", "p2_type"} else None
-        if labels is None and spec.choice_labels:
-            labels = dict(spec.choice_labels)
-        if spec.kind == "bool":
-            return Toggle(spec.key, spec.label, bool(value), self.on_setting)
-        if spec.kind == "int":
-            return Slider(
-                spec.key, spec.label, value,
-                spec.minimum or 0, spec.maximum or 0, spec.step or 1,
-                self.on_setting, fmt=lambda v: str(int(round(v))), on_edit=self._begin_edit,
-            )
-        if spec.kind == "float":
-            return Slider(
-                spec.key, spec.label, value,
-                spec.minimum or 0, spec.maximum or 0, spec.step or 0.01,
-                self.on_setting, fmt=lambda v: f"{v:g}", on_edit=self._begin_edit,
-            )
-        if spec.kind == "choice":
-            return Dropdown(spec.key, spec.label, value, spec.choices, self.on_setting, labels=labels)
-        return None
 
     def _on_mode_change(self, key: str, value) -> None:
         """切模式时把双方类型**顺手修正到该模式说得通的状态**。
@@ -379,6 +395,23 @@ class Sidebar:
                 out.extend(self._section_widgets(section))
         return out
 
+    def _game_widgets(self) -> list[Widget]:
+        """「棋局设置」整组的控件（对局开始后要锁定它们）。"""
+        out: list[Widget] = []
+        for section in self.sections:
+            if section.group_id == "game":
+                out.extend(section.widgets)
+        return out
+
+    def _settings_locked(self) -> bool:
+        """对局已经开始 —— 棋局设置只读。
+
+        "开始"以**落过子**为准（``Status.started``），而不是"点过新局"：
+        空棋盘上随便调棋盘尺寸完全合理，落了子再改就只是"换一局重下"，
+        与其偷偷重开，不如锁上并让玩家自己按「新局」。
+        """
+        return bool(self.status.started)
+
     def _show_thinking_row(self) -> bool:
         return bool(self._ai_kinds())
 
@@ -425,12 +458,21 @@ class Sidebar:
         raise KeyError(group_id)
 
     def _flow(self) -> list[tuple[str, str]]:
-        """滚动区的内容流（双方信息已固定在头部，不在这里）。"""
+        """滚动区的内容流（双方信息已固定在头部，不在这里）。
+
+        「棋局设置」是全局公共选项，**永远排第一**——连 AI 状态行都要排在它后面。
+        """
         flow: list[tuple[str, str]] = []
+        sections = self._active_sections()
+        for section in sections:
+            if section.group_id == "game":
+                flow.append(("section", "game"))
+                break
         if self._show_thinking_row():
             flow.append(("thinking", ""))
-        for section in self._active_sections():
-            flow.append(("section", section.group_id))
+        for section in sections:
+            if section.group_id != "game":
+                flow.append(("section", section.group_id))
         return flow
 
     def _layout_content(self) -> None:
@@ -543,8 +585,12 @@ class Sidebar:
     def update(self, dt_ms: float, mouse: tuple[int, int]) -> None:
         self._time += dt_ms / 1000.0
         self._layout_content()
+        # 对局一旦开始，棋局设置整组锁死（只有开新局才能再改）
+        locked = self._settings_locked()
+        for widget in self._game_widgets():
+            widget.enabled = not locked
         # 正在编辑的输入框被折叠 / 精简掉时，直接确认收工
-        if self._editing is not None and not self._editing.visible:
+        if self._editing is not None and (not self._editing.visible or not self._editing.enabled):
             self._end_editing(commit=True)
         viewport = self.viewport
         inside = viewport.collidepoint(mouse)
@@ -560,8 +606,6 @@ class Sidebar:
         # 按 button.key 分派（label 会被改文案，key 才是稳定标识）
         if button.key == "undo":
             return self.status.can_undo
-        if button.key == "resign":
-            return not self.status.is_over
         if button.key == "step":
             # 只有"暂停中"才需要单步
             return self.status.paused and not self.status.is_over
@@ -639,11 +683,20 @@ class Sidebar:
             if line_x < header.right:
                 pygame.draw.line(surface, theme.BORDER_SOFT, (line_x, header.centery),
                                  (header.right, header.centery), 1)
+            if gid == "game" and self._settings_locked():
+                render.text(surface, fonts.get(11), "已开始 · 开新局可改",
+                            (header.right - 4, header.centery), theme.WARN,
+                            align="right", baseline="middle")
 
         for widget in self._visible_widgets():
             if widget.rect.bottom < viewport.y - 60 or widget.rect.y > viewport.bottom + 60:
                 continue
             widget.draw(surface, fonts)
+            if not widget.enabled:
+                # 锁定态：压一层底色，比单纯"没反应"更容易看懂
+                veil = pygame.Surface(widget.rect.size, pygame.SRCALPHA)
+                veil.fill((*theme.BG_ALT, 150))
+                surface.blit(veil, widget.rect.topleft)
 
         self._draw_thinking(surface, fonts, viewport)
 

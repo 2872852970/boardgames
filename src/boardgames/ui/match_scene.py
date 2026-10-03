@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import pygame
@@ -38,6 +39,7 @@ from boardgames.ui.board_view import PLACEMENT_MODE_KEY, ViewState
 from boardgames.ui.camera import CLICK, CONSUME, CameraController
 from boardgames.ui.fonts import FontBook
 from boardgames.ui.rules_panel import RulesOverlay
+from boardgames.ui.settings_panel import SettingsPanel
 from boardgames.ui.sidebar import Sidebar, Status
 from boardgames.ui.widgets import Button
 
@@ -77,6 +79,88 @@ class _Toast:
         return int(220 * ease_out_cubic(fade))
 
 
+class _Confirm:
+    """二级确认浮层（模态）。
+
+    用在"会毁掉当前对局"的动作上：对局已经落过子时，点「新局」或「大厅」
+    先问一句再动手 —— 这两个按钮紧挨着，误点一次的代价是整局棋没了。
+    空棋盘上（没落过子）不弹，那种情况重开本来就没什么可损失的。
+    """
+
+    CARD_W, CARD_H = 400, 172
+
+    def __init__(self) -> None:
+        self.open = False
+        self.text = ""
+        self._action: Callable[[], None] | None = None
+        self.area = pygame.Rect(0, 0, 600, 600)
+        self.card = pygame.Rect(0, 0, self.CARD_W, self.CARD_H)
+        self.buttons = [
+            Button("确定", self._accept, variant="primary"),
+            Button("取消", self.close),
+        ]
+
+    def ask(self, text: str, action: Callable[[], None]) -> None:
+        self.text = text
+        self._action = action
+        self.open = True
+
+    def close(self) -> None:
+        self.open = False
+        self._action = None
+
+    def _accept(self) -> None:
+        action = self._action
+        self.close()
+        if action is not None:
+            action()
+
+    def layout(self, area: pygame.Rect) -> None:
+        self.area = pygame.Rect(area)
+        self.card = pygame.Rect(0, 0, self.CARD_W, self.CARD_H)
+        self.card.center = area.center
+        w, h, gap = 132, 38, 12
+        left = self.card.centerx - (w * 2 + gap) // 2
+        for i, button in enumerate(self.buttons):
+            button.layout(pygame.Rect(left + i * (w + gap), self.card.bottom - 58, w, h))
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        """开着时模态：吃掉全部事件。"""
+        if not self.open:
+            return False
+        if event.type == pygame.KEYDOWN and event.key in (
+            pygame.K_ESCAPE, pygame.K_n, pygame.K_RETURN, pygame.K_SPACE,
+        ):
+            if event.key == pygame.K_RETURN:
+                self._accept()
+            else:
+                self.close()
+            return True
+        for button in self.buttons:
+            if button.handle_event(event):
+                return True
+        return True
+
+    def update(self, dt_ms: float, mouse: tuple[int, int]) -> None:
+        if not self.open:
+            return
+        for button in self.buttons:
+            button.update(dt_ms, mouse)
+
+    def draw(self, surface, fonts: FontBook) -> None:
+        if not self.open:
+            return
+        veil = pygame.Surface(self.area.size, pygame.SRCALPHA)
+        veil.fill((*theme.BG, 180))
+        surface.blit(veil, self.area.topleft)
+        render.panel(surface, self.card, color=theme.PANEL, radius=theme.RADIUS + 4)
+        render.text(surface, fonts.get(16, bold=True), self.text,
+                    (self.card.centerx, self.card.y + 46), theme.TEXT,
+                    align="center", baseline="middle")
+        for button in self.buttons:
+            button.draw(surface, fonts)
+
+
 class MatchScene:
     """一局对局的全部界面逻辑。"""
 
@@ -111,9 +195,16 @@ class MatchScene:
             Button("再来一局", lambda: self._on_action("new_game", None), variant="primary"),
             Button("悔棋", lambda: self._on_action("undo", None)),
         ]
+        # 结算浮层会盖住棋盘 —— 给它一个「×」，关掉之后棋盘、侧栏照常可用
+        self._result_dismissed = False
+        self._result_close = Button("×", self._dismiss_result)
         # 规则说明：大厅能开，对局里也得能开 —— 下到一半忘了规则是最常见的场景。
         # 同一个浮层组件，谁都能持有一个实例。
         self.rules = RulesOverlay()
+        # 设置浮层：评估权重 / 界面与操作这些不常用参数都收在里面
+        self.settings_panel = SettingsPanel(window.settings, self._on_setting)
+        self._confirm = _Confirm()
+        self._result_card = pygame.Rect(0, 0, 420, 210)
         self._rules_button = Button("规则说明", self._open_rules)
         self._apply_view_flags()
 
@@ -128,15 +219,19 @@ class MatchScene:
         # 必须停掉后台 AI 线程：否则它会继续跑并持有旧局面的引用
         self.session.cancel_thinking()
         self.rules.close()
+        self.settings_panel.close()
+        self._confirm.close()
 
     def layout(self, area: pygame.Rect) -> None:
+        # ``area`` 是**内容区**（无边框时已经让出自绘标题栏那一条），所以这里
+        # 一律用 ``area.x/area.y`` 定位 —— 写成 0 的话侧栏和棋盘会顶到标题栏底下。
         width, height = area.width, area.height
         # 窗口偏窄时侧栏按比例收窄，把空间让给棋盘
         sidebar_w = max(theme.SIDEBAR_MIN_W, min(theme.SIDEBAR_W, int(width * 0.34)))
         sidebar_w = min(sidebar_w, max(theme.SIDEBAR_MIN_W, width - 360))
-        self.sidebar_rect = pygame.Rect(width - sidebar_w, 0, sidebar_w, height)
+        self.sidebar_rect = pygame.Rect(area.right - sidebar_w, area.y, sidebar_w, height)
         margin = theme.BOARD_MARGIN
-        board_rect = pygame.Rect(0, 0, width - sidebar_w, height).inflate(
+        board_rect = pygame.Rect(area.x, area.y, width - sidebar_w, height).inflate(
             -margin * 2, -margin * 2
         )
         self.sidebar.layout(self.sidebar_rect)
@@ -146,14 +241,22 @@ class MatchScene:
             # 排除在外，否则在卡片上拖动会被当成拖画布）
             viewport = getattr(self.view, "camera_viewport", None)
             self._cam.camera.set_viewport(viewport() if callable(viewport) else board_rect)
-        self.board_area = pygame.Rect(0, 0, width - sidebar_w, height)
+        self.board_area = pygame.Rect(area.x, area.y, width - sidebar_w, height)
         self._layout_overlay_buttons()
-        self.rules.layout(pygame.Rect(0, 0, width, height))
+        self.rules.layout(pygame.Rect(area.x, area.y, width, height))
+        self.settings_panel.layout(pygame.Rect(area.x, area.y, width, height))
+        self._confirm.layout(pygame.Rect(area.x, area.y, width, height))
 
     def handle_event(self, event: pygame.event.Event) -> bool:
-        # 规则浮层是模态的：开着的时候它吃掉全部事件，棋盘 / 侧栏都不再响应
+        # 浮层都是模态的：谁开着谁吃掉全部事件，棋盘 / 侧栏不再响应
+        if self._confirm.open:
+            self._confirm.handle_event(event)
+            return True
         if self.rules.open:
             self.rules.handle_event(event)
+            return True
+        if self.settings_panel.open:
+            self.settings_panel.handle_event(event)
             return True
         if event.type == pygame.KEYDOWN:
             # 侧栏有输入框在编辑时，键盘先给它（避免 Esc/N/U 误触发）
@@ -182,13 +285,19 @@ class MatchScene:
         self.view.update(dt_ms)
 
         mouse = pygame.mouse.get_pos()
+        if not session.is_over:
+            self._result_dismissed = False  # 新的一局结束时要重新弹结算
         self.sidebar.status = self._build_status()
         self.sidebar.update(dt_ms, mouse)
+        over_card = session.is_over and not self._result_dismissed
         for button in self._overlay_buttons:
-            button.visible = session.is_over
+            button.visible = over_card
             button.update(dt_ms, mouse)
+        self._result_close.update(dt_ms, mouse)
         self._rules_button.update(dt_ms, mouse)
         self.rules.update(dt_ms, mouse)
+        self.settings_panel.update(dt_ms, mouse)
+        self._confirm.update(dt_ms, mouse)
 
     def draw(self, surface: pygame.Surface, fonts: FontBook) -> None:
         surface.fill(theme.BG)
@@ -200,12 +309,14 @@ class MatchScene:
             interactive=self._interactive(),
         )
         self._draw_board_hud(surface, fonts)
-        if session.is_over:
+        if session.is_over and not self._result_dismissed:
             self._draw_result_overlay(surface, fonts)
         self.sidebar.draw(surface, fonts)
         self._draw_toast(surface, fonts)
         self._rules_button.draw(surface, fonts)
         self.rules.draw(surface, fonts)
+        self.settings_panel.draw(surface, fonts)
+        self._confirm.draw(surface, fonts)
 
     # ------------------------------------------------------------------ #
     # 内部工具
@@ -318,6 +429,11 @@ class MatchScene:
         top = center[1] + 44
         self._overlay_buttons[0].layout(pygame.Rect(left, top, w, h))
         self._overlay_buttons[1].layout(pygame.Rect(left + w + gap, top, w, h))
+        # 结算卡片与它的「×」：卡片位置在这里定，绘制与命中判定共用
+        card = pygame.Rect(0, 0, 420, 210)
+        card.center = center
+        self._result_card = card
+        self._result_close.layout(pygame.Rect(card.right - 38, card.y + 10, 28, 28))
         # 「规则说明」固定在棋盘右上角：左上角是悬停提示胶囊，底部是手牌条 / 提示行
         self._rules_button.layout(
             pygame.Rect(area.right - 18 - RULES_BUTTON_W, area.y + 14, RULES_BUTTON_W, 30)
@@ -325,6 +441,14 @@ class MatchScene:
 
     def _open_rules(self) -> None:
         self.rules.show(self.session.game)
+
+    def _open_settings(self) -> None:
+        self.settings_panel.show(self.game_key, self.session.resolved_player_types())
+
+    def _dismiss_result(self) -> None:
+        """收起结算浮层 —— 棋盘重新露出来，可以慢慢复盘。"""
+        if self.session.is_over:
+            self._result_dismissed = True
 
     # ------------------------------------------------------------------ #
     # 侧栏回调
@@ -349,12 +473,9 @@ class MatchScene:
 
     def _on_action(self, action: str, payload) -> None:
         if action == "new_game":
-            self._restart()
-            self.toast.show("新的一局")
+            self._request("new_game", "当前对局还没结束，确定要开一局新的吗？")
         elif action == "undo":
             self._do_undo()
-        elif action == "resign":
-            self.session.resign()
         elif action == "step":
             if self.session.request_step():
                 self.toast.show("单步：AI 思考中…")
@@ -365,6 +486,26 @@ class MatchScene:
             if self.session.paused:
                 self.session.cancel_thinking()
             self.toast.show("已暂停" if self.session.paused else "继续")
+        elif action == "lobby":
+            self._request("lobby", "当前对局还没结束，确定要回大厅吗？")
+        elif action == "open_settings":
+            self._open_settings()
+
+    def _request(self, action: str, question: str) -> None:
+        """会毁掉当前对局的动作：**已经落过子**时先弹二级确认。
+
+        空棋盘（没落过子）与已终局不弹 —— 前者本来就没有可损失的东西，
+        后者玩家已经知道结果了，再拦一次只是啰嗦。
+        """
+        if self.session.is_over or not self.session.can_undo():
+            self._perform(action)
+            return
+        self._confirm.ask(question, lambda: self._perform(action))
+
+    def _perform(self, action: str) -> None:
+        if action == "new_game":
+            self._restart()
+            self.toast.show("新的一局")
         elif action == "lobby":
             self.window.goto_lobby()
 
@@ -377,6 +518,7 @@ class MatchScene:
                 self._cam.cancel()
         self._set_place_mode(False)
         self._last_move = None
+        self._result_dismissed = False
         self.sidebar.sync_from_settings()
         if self.session.mode == "eve":
             self.toast.show("AI 自对弈已暂停：点「单步」或点棋盘逐步推进")
@@ -425,8 +567,6 @@ class MatchScene:
             self._on_action("new_game", None)
         elif event.key == pygame.K_u:
             self._do_undo()
-        elif event.key == pygame.K_r:
-            self._on_action("resign", None)
         elif event.key in (pygame.K_SPACE, pygame.K_s) and session.mode == "eve":
             if event.key == pygame.K_s:
                 self._on_action("step", None)
@@ -504,7 +644,9 @@ class MatchScene:
         if self._rules_button.handle_event(event):
             return
 
-        if self.session.is_over:
+        if self.session.is_over and not self._result_dismissed:
+            if self._result_close.handle_event(event):
+                return
             for button in self._overlay_buttons:
                 if button.handle_event(event):
                     return
@@ -618,6 +760,8 @@ class MatchScene:
             is_over=session.is_over,
             paused=session.paused,
             can_undo=session.can_undo(),
+            # 落过子（或已终局）就算"开局了" —— 棋局设置从此锁定，只能开新局改
+            started=session.can_undo() or session.is_over,
             hint=self._hint_text(),
             extras={"is_selfplay": session.mode == "eve"},
         )
@@ -715,12 +859,11 @@ class MatchScene:
         veil.fill((*theme.BG, 190))
         surface.blit(veil, area.topleft)
 
-        card = pygame.Rect(0, 0, 420, 210)
-        card.center = area.center
+        card = self._result_card
         render.panel(surface, card, color=theme.PANEL, radius=theme.RADIUS + 4)
         render.text(surface, fonts.get(24, bold=True), self.session.result_text(),
                     (card.centerx, card.y + 46), theme.TEXT, align="center", baseline="middle")
-        render.text(surface, fonts.get(13), "按 U 悔棋复盘 · N 开新局 · Esc 回大厅",
+        render.text(surface, fonts.get(13), "按 U 悔棋复盘 · N 开新局 · Esc 回大厅 · 点 × 先看棋盘",
                     (card.centerx, card.y + 84), theme.TEXT_DIM, align="center", baseline="middle")
         w, h, gap = 132, 40, 12
         total = w * 2 + gap
@@ -728,6 +871,7 @@ class MatchScene:
         for i, button in enumerate(self._overlay_buttons):
             button.layout(pygame.Rect(left + i * (w + gap), card.y + 128, w, h))
             button.draw(surface, fonts)
+        self._result_close.draw(surface, fonts)
 
     def _draw_toast(self, surface, fonts: FontBook) -> None:
         if not self.toast.active():

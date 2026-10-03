@@ -245,14 +245,25 @@ class GameWindow:
         self._switch(self._build_lobby())
 
     def goto_match(self, game_key: str | None = None) -> None:
-        """进入对局。``game_key`` 省略时沿用当前棋类。"""
+        """进入对局。``game_key`` 省略时沿用当前棋类。
+
+        **从大厅进来**时把模式复位成「双人对战」—— 每个新游戏的初始状态都该是它，
+        不该继承上一局存的"人机 / 自对弈"。**没有下完的那局会留着**（回大厅再进来
+        可以接着下），这一点与"大厅卡片选游戏"的语义一致：换棋类才真正开新局。
+        """
+        new_game = self.scene is not self.match or (
+            game_key is not None and game_key != self.game_key
+        )
+        if new_game:
+            self.settings.set("mode", "pvp")
         if game_key is not None and game_key != self.game_key:
             self.game_key = game_key
             from boardgames.ui.match_scene import MatchScene
 
             self.match = MatchScene(self, game_key)
-        elif self.scene is self.match:
-            self.match._restart()
+        elif new_game:
+            # 沿用现有对局：侧栏的模式切换要跟着回到「双人对战」
+            self.match.sidebar.sync_from_settings()
         self._switch(self.match)
 
     def _switch(self, scene: Scene) -> None:
@@ -361,6 +372,10 @@ class GameWindow:
     @property
     def toast(self):
         return self.match.toast
+
+    @property
+    def settings_panel(self):
+        return self.match.settings_panel
 
     def _on_setting(self, key: str, value) -> None:
         self.match._on_setting(key, value)

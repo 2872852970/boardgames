@@ -74,20 +74,34 @@ def _applicable_keys(sidebar) -> set[str]:
             for widget in sidebar._section_widgets(section)}
 
 
+def _panel_keys(window) -> set[str]:
+    """「设置」浮层里当前会画出来的参数键（评估权重 / 界面与操作都在这）。"""
+    window.settings_panel.show(window.match.game_key, window.session.resolved_player_types())
+    return {widget.key for widget in window.settings_panel._visible_widgets()}
+
+
 def test_sidebar_shows_hive_only_params(make_window):
     window = _match_window(make_window)
     keys = _applicable_keys(window.sidebar)
     assert "hive_expansion" in keys, "扩展虫开关该出现"
     assert "first_player" in keys
-    assert "w_hive_surround" in keys, "昆虫棋的评估权重该出现在「评估权重」里"
+
+
+def test_settings_panel_shows_hive_weights_and_ui_params(make_window):
+    window = _match_window(make_window)
+    keys = _panel_keys(window)
+    assert "w_hive_surround" in keys, "昆虫棋的评估权重该出现在「设置」里"
+    assert "hive_anim_ms" in keys, "界面与操作也该在「设置」里"
 
 
 def test_sidebar_hides_other_games_params(make_window):
     window = _match_window(make_window)
-    keys = _applicable_keys(window.sidebar)
-    for key in ("board_size", "walls_per_player", "connect4_cols", "abalone_setup",
-                "w_path", "w_material", "w_abalone_out", "c4_anim_ms"):
-        assert key not in keys, f"昆虫棋不该看到 {key}"
+    for key in ("board_size", "walls_per_player", "connect4_cols", "abalone_setup"):
+        assert key not in _applicable_keys(window.sidebar), f"昆虫棋不该看到 {key}"
+    # 别的棋类的权重 / 动画参数也不能通过「设置」溜进来
+    panel = _panel_keys(window)
+    for key in ("w_path", "w_material", "w_abalone_out", "c4_anim_ms"):
+        assert key not in panel, f"昆虫棋不该看到 {key}"
 
 
 def test_toggling_expansion_restarts_with_new_pieces(make_window):

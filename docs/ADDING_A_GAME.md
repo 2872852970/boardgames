@@ -247,6 +247,10 @@ ParamSpec("othello_size", "棋盘尺寸", "int", 8, 6, 12, 1, group="game", game
 若是权重类参数，还要把键加进同一文件里的 `WEIGHT_KEYS`
 （那是个**字面量 tuple**，忘了加的话滑块拖了完全不生效）。
 
+`group` 决定它出现在哪：`game` / `players` / `minimax` / `mcts` 在侧栏，
+`eval`（权重）与 `ui`（界面与操作）收在「设置」浮层（`sidebar.PANEL_GROUPS`）。
+两组都有按棋类过滤，标了 `games=` 就自动生效，**不需要改浮层的代码**。
+
 需要**改动即重开一局**的参数，把 key 加进 `ui/match_scene.py` 的 `RESTART_KEYS`：
 
 ```python

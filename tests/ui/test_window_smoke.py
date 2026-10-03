@@ -216,7 +216,8 @@ def test_sidebar_keeps_only_relevant_groups(make_window):
     window = make_window(mode="pvp")
     window._update(16.0)
     active = {s.group_id for s in window.sidebar._active_sections()}
-    assert active == {"game", "ui"}
+    # 「评估权重」「界面与操作」已收进「设置」浮层，侧栏只留常用分组
+    assert active == {"game"}
     assert not window.sidebar._show_thinking_row()
 
 
@@ -227,7 +228,6 @@ def test_sidebar_shows_minimax_only_when_used(make_window):
     assert "minimax" in active
     assert "mcts" not in active
     assert "players" in active
-    assert "eval" in active
     assert window.sidebar._show_thinking_row()
 
 

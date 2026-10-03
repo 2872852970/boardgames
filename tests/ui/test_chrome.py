@@ -73,6 +73,20 @@ def test_title_bar_follows_the_game_name(make_frameless):
     assert "重力四子棋" in window.titlebar.title
 
 
+def test_match_scene_also_stays_below_the_title_bar(make_frameless):
+    """对局场景早先漏了 ``area.y``：侧栏与棋盘从 y=0 开始，被标题栏压掉一条。"""
+    window = make_frameless()
+    window.goto_match("hive")
+    window._update(16.0)
+    match = window.match
+    assert match.board_area.top == TITLEBAR_H
+    assert match.sidebar_rect.top == TITLEBAR_H
+    # 侧栏第一行内容（游戏名 / 模式切换）也得整块落在标题栏下面
+    assert match.sidebar.viewport.top > TITLEBAR_H
+    widget = next(w for w in match.sidebar._visible_widgets() if w.key == "hive_expansion")
+    assert widget.rect.top >= TITLEBAR_H, "棋局设置的控件跑到标题栏底下了"
+
+
 def test_resizing_keeps_the_window_frameless(make_frameless):
     window = make_frameless()
     pygame.event.post(pygame.event.Event(pygame.VIDEORESIZE, {"size": (1000, 660), "w": 1000, "h": 660}))
