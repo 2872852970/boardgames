@@ -108,5 +108,7 @@ settings_map: ClassVar[Mapping[str, str]] = {}   # settings 键 -> 构造参数�
   按坐标写、其余自动填充 —— 手写棋盘图字符串极易抄错。
 - ⚠️ **跨测试目录 import 文件名不能重名**：pytest 把每个测试目录都插进 `sys.path` 且
   没有 `__init__.py`，两个 `helpers.py` 会互相覆盖。所以大力士棋用 `aba_helpers.py`。
-- ⚠️ **测试文件名必须匹配 pytest 默认规则** `test_*.py`：既有的
-  `tests/games/connect4/c4_test_*.py` 因此**从未被自动收集**（85 项）。新棋类一律用 `test_*.py`。
+- ⚠️ **测试文件名必须匹配 pytest 默认规则** `test_*.py`。既有的
+  `tests/games/connect4/c4_test_*.py` 曾因此**从未被自动收集（85 项）**，
+  2026-10-03 已重命名为 `test_c4_*.py`（保留 `c4_` 段是为了避免跨目录 basename 重名）。
+  新棋类一律用 `test_<key>_<thing>.py`，改完用 `find tests -name "test_*.py" -exec basename {} \; | sort | uniq -d` 验一下没有重名。

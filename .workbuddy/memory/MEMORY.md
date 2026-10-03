@@ -8,12 +8,17 @@
 > `.workbuddy/memory/details/`：`architecture.md`（分层/扩展点/场景/侧栏/测试公用件）、
 > `ai.md`（引擎契约/调参/rollout）、`ui.md`（事件/绘制/动画/交互/**摄像机**）、
 > `quoridor.md`、`connect4.md`、`abalone.md`、`hive.md`。改哪一块就先读对应那一篇。
+>
+> **对外文档在 `docs/`**（README 精简后长文都挪到了这里）：
+> `docs/ARCHITECTURE.md`（项目总结 / 架构总览 / 跨棋类坑清单）、
+> `docs/ADDING_A_GAME.md`（新增棋类的实操步骤与代码模板）。
+> 改了框架契约或扩展点，这两个文件要同步更新。
 
 ## 运行
 
 ```bash
 uv sync && uv run boardgames            # 启动（先进大厅）
-uv run pytest                           # 全部（694 passed / 11 skipped）
+uv run pytest                           # 全部（779 passed / 11 skipped）
 uv run ruff check src tests scripts     # 必须 All checks passed
 uv run boardgames --game hive           # 也可 --game connect4 / abalone / quoridor
 uv run boardgames --scene match --offscreen --frames 5 --screenshot out.png  # 离屏（无窗口）
