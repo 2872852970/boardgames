@@ -37,6 +37,27 @@
 - `request_step()` 置 `stepping = True`；`poll()` 落子后把 `stepping` 复位，`paused` 不变，
   因此单步走完仍然暂停。侧栏在 eve 模式才显示「单步」「暂停」两个按钮。
 
+## AI 调度必须让开落子动画（`MatchScene.update`）
+
+上一手的落子动画没播完，AI 不许动手。各视图的 `animate` 刻意**不排队**
+（新动画顶掉旧的），所以少挡一处就会出现"玩家那一枚被从半空瞬移到落点 +
+对面已经下完"，也就是"我的子还没落地 AI 就落子了"。
+
+```python
+animating = self.view.is_animating()
+if not session.is_over and session.is_ai_turn() and not animating:
+    session.start_thinking()          # ① 动画期间不起搜索
+move = None if animating else session.poll()   # ② 动画期间不取结果
+if move is not None:
+    self._play_move(move)
+```
+
+- **两处都要挡**：只挡 ① 挡不住自对弈"点棋盘单步"（搜索是上一次起好的，结果照样被取走）；
+  只挡 ② 则 AI "白想"一段时间、状态栏一直显示思考中。
+- ② 期间着法留在 `session._pending_move` 里，`is_thinking()` 仍为真 → 状态栏不闪，
+  动画结束的下一帧就落子。
+- 自对弈单步同理：动画没播完时 toast 说「排队：上一手落完就走」，别报假的"思考中"。
+
 ## 弹跳下落动画（`ui/animation.py: BounceTween`）
 
 物理积分而非补间曲线。三条都是必需项，不是优化：
@@ -58,6 +79,23 @@
 - 四子棋的落差由 `Connect4View.drop_px_for(row)` 给：**所有棋子从棋盘上沿之上
   `DROP_ENTRY_CELLS` 格进场，落点越低掉得越远**（真棋具就是从顶口投子）。
   别用固定落差 —— 翻转坐标后固定落差会让棋子"在棋盘中间凭空出现"。
+
+## 「设置」浮层（`ui/settings_panel.py`）
+
+收纳"调一次就不再碰"的参数（`sidebar.PANEL_GROUPS` = `eval` / `ui`），
+侧栏底栏「设置」按钮打开，模态，`Esc` / 点遮罩 / 点 `×` 关。
+
+- 分组标题**可折叠**：`_Group.expanded`，点标题行切换（放在 `_visible_widgets()`
+  的筛选里，事件 / 绘制 / 同步全都认它）。箭头用 `render.disclosure_arrow()` ——
+  三角形是画的，`▶` 字形在部分中文字体里是缺字（侧栏也改用它了）。
+- 收起的分组要把控件 `visible=False` **且** `layout(Rect(0, -9000, 0, 0))` 挪出画面：
+  只标不可见的话它们还在原坐标上接事件（点空白处会改到看不见的滑块）。
+- 折叠状态**只存实例上**，不要放模块级：模块级会让"某个测试先折叠了 eval"
+  污染别的测试的可见键断言，变成顺序相关的偶发失败。
+- 卡片高度跟着内容走（`_fit_card`，上限 `CARD_MAX_H`）：整组收起后卡片要跟着缩，
+  否则底下留一大片空白，看着像加载失败。
+- `sync_from_settings()` 同步**全部**控件（不只是可见的），这样折叠中的分组
+  展开时显示的是当前值而不是"上次打开时的旧值"。
 
 ## 棋盘交互约定（Quoridor）
 

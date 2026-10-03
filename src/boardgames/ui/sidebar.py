@@ -675,7 +675,10 @@ class Sidebar:
             section = self._section(gid)
             if not header.colliderect(viewport):
                 continue
-            self._draw_arrow(surface, header, section.expanded)
+            render.disclosure_arrow(
+                surface, (header.x + 5, header.centery), section.expanded,
+                theme.TEXT_FAINT if not section.expanded else theme.TEXT_DIM,
+            )
             bold = fonts.get(13, bold=True)
             render.text(surface, bold, section.title, (header.x + 16, header.centery),
                         theme.TEXT if section.expanded else theme.TEXT_DIM, baseline="middle")
@@ -742,17 +745,6 @@ class Sidebar:
         else:
             render.text(surface, fonts.get(12), "AI 就绪", (rect.x + 12, rect.centery),
                         theme.TEXT_FAINT, baseline="middle")
-
-    @staticmethod
-    def _draw_arrow(surface: pygame.Surface, header: pygame.Rect, expanded: bool) -> None:
-        """折叠箭头用绘制的三角形 —— 字形 ``▶`` 在部分中文字体里是缺字。"""
-        cx, cy = header.x + 5, header.centery
-        size = 4
-        if expanded:
-            points = [(cx - size, cy - size // 2), (cx + size, cy - size // 2), (cx, cy + size)]
-        else:
-            points = [(cx - size // 2, cy - size), (cx - size // 2, cy + size), (cx + size, cy)]
-        pygame.draw.polygon(surface, theme.TEXT_FAINT, points)
 
     def _draw_scrollbar(self, surface: pygame.Surface, viewport: pygame.Rect) -> None:
         if self.max_scroll <= 1:

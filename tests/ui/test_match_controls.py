@@ -230,6 +230,50 @@ def test_settings_panel_holds_the_less_used_params(make_window):
     assert "board_size" not in keys, "常用项不该跑到设置浮层来"
 
 
+def test_settings_panel_groups_can_be_collapsed(make_window):
+    """点分组标题把整组收起 / 展开（与侧栏一致）。"""
+    window = make_window(mode="pvp")
+    window._update(16.0)
+    panel = window.settings_panel
+    panel.show("quoridor", window.session.resolved_player_types())
+    window._update(16.0)
+
+    eval_group = panel.group("eval")
+    assert eval_group.expanded, "默认展开：点开就是为了改它们"
+    assert "w_path" in {w.key for w in panel._visible_widgets()}
+
+    header = next(rect for group, rect in panel._headers if group is eval_group)
+    pygame.event.post(press(header.center))
+    window._handle_events()
+    assert not eval_group.expanded, "点标题行应当收起"
+    keys = {w.key for w in panel._visible_widgets()}
+    assert "w_path" not in keys, "收起后不该还能接到（也不该画出来）"
+    assert "anim_ms" in keys, "另一组不受影响"
+
+    # 再点一次展开回来
+    header = next(rect for group, rect in panel._headers if group is eval_group)
+    pygame.event.post(press(header.center))
+    window._handle_events()
+    assert eval_group.expanded
+    assert "w_path" in {w.key for w in panel._visible_widgets()}
+
+
+def test_collapsed_settings_group_keeps_no_live_widgets(make_window):
+    """收起的分组：控件既不可见，也不该留在能接事件的坐标上。"""
+    window = make_window(mode="pvp")
+    window._update(16.0)
+    panel = window.settings_panel
+    panel.show("quoridor", window.session.resolved_player_types())
+
+    ui_group = panel.group("ui")
+    ui_group.expanded = False
+    panel._layout_content()
+    hidden = [w for w in ui_group.widgets if panel._widget_applicable(w)]
+    assert hidden, "「界面与操作」这组总得有东西"
+    assert all(not w.visible for w in hidden)
+    assert all(w.rect.bottom < 0 for w in hidden), "收起的控件必须挪出画面，否则会被点到"
+
+
 def test_settings_panel_is_modal_and_closes_on_escape(make_window):
     window = make_window(mode="pvp")
     window._update(16.0)

@@ -269,15 +269,29 @@ class MatchScene:
     def update(self, dt_ms: float) -> None:
         session = self.session
         self._apply_view_flags()
-        self.view_state.input_locked = self.view.is_animating()
+        animating = self.view.is_animating()
+        self.view_state.input_locked = animating
         self.view_state.interactive_player = (
             session.state.current_player if session.is_human_turn() else None
         )
 
         # AI 调度（暂停 / 单步由 session 自己判断）
-        if not session.is_over and session.is_ai_turn():
+        #
+        # **上一手的落子动画没播完，就不许 AI 上手。** 动画是刻意"不排队"的
+        # （新动画直接顶掉旧的，见 ``BounceTween`` / 各视图的 ``animate``），
+        # 于是 AI 那一手会把玩家刚投下的子**截断**：棋子还在半空就被瞬移到落点。
+        # 人机对战里看到的就是"我的子还没落地，对面已经下完了"。
+        #
+        # 两处都要挡，缺一不可：
+        # * 只挡 ``start_thinking``：自对弈里"点棋盘单步"仍然可能在动画播放中
+        #   把结果取回来（搜索是上一次就起好的）；
+        # * 只挡 ``poll``：AI 会"白想"一段时间 —— 搜索照跑、结果被按住，
+        #   状态栏一直显示思考中，观感反而更怪。
+        if not session.is_over and session.is_ai_turn() and not animating:
             session.start_thinking()
-        move = session.poll()
+        # 动画播放期间**不取结果**：着法留在 ``session`` 里等着（``is_thinking``
+        # 因此仍然为真，状态栏不会闪），动画一结束的下一帧就落子。
+        move = None if animating else session.poll()
         if move is not None:
             self._play_move(move)
 
@@ -636,7 +650,13 @@ class MatchScene:
         session = self.session
         if session.mode != "eve" or not session.paused or session.is_over:
             return False
-        if session.request_step():
+        if not session.request_step():
+            return True
+        # 上一手还在落子：这一步排队等着（``update`` 会在动画播完后才放行），
+        # 别报"思考中" —— 那样状态栏与实际不符，玩家会以为卡住了。
+        if self.view.is_animating():
+            self.toast.show("排队：上一手落完就走")
+        else:
             self.toast.show("单步：AI 思考中…")
         return True
 

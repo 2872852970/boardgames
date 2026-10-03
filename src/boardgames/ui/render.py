@@ -119,6 +119,27 @@ def circle_glow(
         surface.blit(layer, (center[0] - r, center[1] - r))
 
 
+def disclosure_arrow(
+    surface: pygame.Surface,
+    center: tuple[int, int],
+    expanded: bool,
+    color: tuple[int, int, int] = theme.TEXT_FAINT,
+    *,
+    size: int = 4,
+) -> None:
+    """分组标题左边的折叠箭头（展开朝下 / 收起朝右）。
+
+    用**绘制的三角形**而不是 ``▶`` 字形：后者在部分中文字体里是缺字，
+    会画成一个方框。侧栏与「设置」浮层共用。
+    """
+    cx, cy = center
+    if expanded:
+        points = [(cx - size, cy - size // 2), (cx + size, cy - size // 2), (cx, cy + size)]
+    else:
+        points = [(cx - size // 2, cy - size), (cx - size // 2, cy + size), (cx + size, cy)]
+    pygame.draw.polygon(surface, color, points)
+
+
 def truncate(font: pygame.font.Font, content: str, max_width: int) -> str:
     """按像素宽度截断文字并加省略号。"""
     if font.size(content)[0] <= max_width:

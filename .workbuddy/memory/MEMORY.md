@@ -21,7 +21,7 @@
 
 ```bash
 uv sync && uv run boardgames            # 启动（先进大厅）
-uv run pytest                           # 全部（801 passed / 11 skipped）
+uv run pytest                           # 全部（804 passed / 11 skipped）
 uv run ruff check src tests scripts     # 必须 All checks passed
 uv run boardgames --game hive           # 也可 --game connect4 / abalone / quoridor
 uv run boardgames --scene match --offscreen --frames 5 --screenshot out.png  # 离屏（无窗口）
@@ -121,6 +121,13 @@ git 分支 `master`。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/
 18. **`MatchScene` 的三个模态浮层**（顺序即优先级）：`_confirm` → `rules` →
     `settings_panel`，都在 `handle_event` 最前面拦一刀。二级确认只拦「新局 / 大厅」，
     空棋盘与已终局直接执行；结算浮层的 `×` 只置 `_result_dismissed`，`_restart()` 里复位。
+19. **落子动画没播完，AI 不许动手**（`MatchScene.update`）：`start_thinking()` 要看
+    `not view.is_animating()`，**而且动画期间不调 `session.poll()`**（着法留在
+    `_pending_move` 里，`is_thinking()` 仍为真所以状态栏不闪）。视图的 `animate` 是
+    **不排队**的（新动画顶掉旧的），少挡一处就是"我的子被从半空瞬移到落点 + 对面已下完"。
+20. **收起的分组要把控件挪出画面**（`visible=False` + `layout(Rect(0,-9000,0,0))`）：
+    只设不可见，它们还在原坐标接事件。折叠状态只存实例、别放模块级（会让测试互相污染）。
+    折叠箭头一律用 `render.disclosure_arrow()`（`▶` 字形在部分中文字体里缺字）。
 
 ## 昆虫棋独有（详见 `details/hive.md`）
 

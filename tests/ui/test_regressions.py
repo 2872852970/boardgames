@@ -5,7 +5,9 @@
 1. 鼠标划过侧栏分组标题就疯狂折叠/展开（连同里面的下拉菜单一起抖动）；
 2. AI 结果已返回、落子停顿未过时主循环每帧重开搜索 → "思考中"闪烁且 AI 不落子；
 3. 窗口尺寸不裁剪到屏幕 → 小屏/高 DPI 下底部按钮被裁掉；
-4. 滑块在不按左键时也跟着鼠标动（在侧栏外松手导致拖拽态卡死）。
+4. 滑块在不按左键时也跟着鼠标动（在侧栏外松手导致拖拽态卡死）；
+5. 人机对战里玩家落子的动画还没播完，AI 就抢着落子 —— 动画"不排队"，
+   新的一手会把玩家那一枚从半空直接瞬移到落点。
 """
 
 from __future__ import annotations
@@ -182,6 +184,44 @@ def test_is_thinking_stays_true_until_move_lands(make_window):
 
     assert len(session.history) > 1, "AI 没有落子"
     assert not flipped_off, "「思考中」在落子前中途变过 False（会导致界面闪烁）"
+
+
+# --------------------------------------------------------------------------- #
+# 2b. 落子动画没播完，AI 不许抢着落子
+# --------------------------------------------------------------------------- #
+
+def test_ai_waits_until_the_human_drop_animation_ends(make_window):
+    """人机对战：玩家那一枚还在往下掉时，AI 那一手不许落地。
+
+    ``animate`` 是**不排队**的（新动画直接顶掉旧的），所以只要 AI 抢先落子，
+    玩家看到的就不是"我的子落到底"，而是"我的子半空中瞬间归位 + 对面已经下完"。
+    """
+    window = make_window(
+        game_key="connect4",
+        mode="pve", p1_type="human", p2_type="random",
+        c4_anim_ms=600,   # 长得足够观察，又短得跑得完
+        ai_delay_ms=0,
+    )
+    session = window.session
+    window._update(16.0)
+
+    pygame.event.post(_press(window.view.cell_center(3, 0)))
+    window._handle_events()
+    assert len(session.history) == 2, "玩家那一手没落上"
+    assert window.view.is_animating()
+
+    # 动画播放期间：AI 既不落子，也不该开始思考（否则状态栏会先闪一下"思考中"）
+    for _ in range(10):
+        window._update(16.0)
+        assert len(session.history) == 2, "动画还没播完 AI 就落子了"
+        assert not session.is_thinking(), "动画还没播完 AI 就开始搜索了"
+    assert window.view.is_animating(), "10 帧（160ms）不至于播完 600ms 的动画"
+
+    # 动画播完后 AI 才动手
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline and len(session.history) < 3:
+        window._update(16.0)
+    assert len(session.history) == 3, "AI 始终没落子"
 
 
 # --------------------------------------------------------------------------- #
