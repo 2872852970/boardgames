@@ -94,7 +94,13 @@ class Button(Widget):
             alpha = int((1.0 - self._press_t) * 70)
             render.rounded_rect(overlay, pygame.Rect(0, 0, *rect.size), (*theme.ACCENT, alpha), theme.RADIUS_SM)
             surface.blit(overlay, rect.topleft)
-        render.text(surface, fonts.get(14), self.label, rect.center, fg, align="center", baseline="middle")
+        # 按钮很窄时（如最小侧栏下 6 个底栏按钮）降一档字号，
+        # 否则中文两字会顶到边框
+        size = 14
+        if fonts.get(14).size(self.label)[0] > rect.width - 8:
+            size = 12
+        render.text(surface, fonts.get(size), self.label, rect.center, fg,
+                    align="center", baseline="middle")
 
 
 # --------------------------------------------------------------------------- #

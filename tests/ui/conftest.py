@@ -23,10 +23,16 @@ def make_window(tmp_path):
     created: list[GameWindow] = []
 
     def _make(**overrides) -> GameWindow:
+        # 约定：``game_key`` / ``start_scene`` 是窗口构造参数，其余覆盖写进 settings
+        window_kwargs = {
+            key: overrides.pop(key)
+            for key in ("game_key", "start_scene")
+            if key in overrides
+        }
         settings = Settings(tmp_path / "settings.json")
         for key, value in overrides.items():
             settings.values[key] = value
-        window = GameWindow(settings, build_registry(), headless=True)
+        window = GameWindow(settings, build_registry(), headless=True, **window_kwargs)
         created.append(window)
         return window
 

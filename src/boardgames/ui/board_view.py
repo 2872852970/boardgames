@@ -16,6 +16,15 @@ from boardgames.core.move import Move
 from boardgames.core.state import State
 from boardgames.ui.fonts import FontBook
 
+#: ``ViewState.extra`` 里存放"放置模式"开关的键。
+#:
+#: 放在这里而不是 ``games/quoridor/view.py``，是为了让 :mod:`boardgames.ui`
+#: 不反向依赖具体棋类 —— 早先 ``ui/window.py`` 直接 import
+#: ``games.quoridor.view.WALL_MODE_KEY``，是整个框架最脏的一处耦合。
+#: ``quoridor`` 那边保留 ``WALL_MODE_KEY = PLACEMENT_MODE_KEY`` 别名，
+#: 因此直接引用它的既有测试一行都不用改。
+PLACEMENT_MODE_KEY = "placement_mode"
+
 
 @dataclass
 class ViewState:

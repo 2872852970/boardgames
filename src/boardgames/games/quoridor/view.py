@@ -27,7 +27,7 @@ from boardgames.games.quoridor.move import PawnMove, WallMove
 from boardgames.games.quoridor.state import QuoridorState
 from boardgames.ui import render, theme
 from boardgames.ui.animation import Tween, ease_out_back, ease_out_cubic, lerp_pos
-from boardgames.ui.board_view import ViewState
+from boardgames.ui.board_view import PLACEMENT_MODE_KEY, ViewState
 from boardgames.ui.fonts import FontBook
 
 #: 放墙模式下鼠标吸附范围（单位：格）。每个内部交点负责它周围 1×1 格的方形区域，
@@ -38,7 +38,8 @@ ORIENT_HYSTERESIS = 0.12
 #: 刚放下的那面墙，鼠标还停在这个范围内就不再提示
 JUST_PLACED_RADIUS = 0.75
 
-WALL_MODE_KEY = "wall_mode"
+WALL_MODE_KEY = PLACEMENT_MODE_KEY
+"""兼容别名：历史名。新代码请用 :data:`~boardgames.ui.board_view.PLACEMENT_MODE_KEY`。"""
 
 
 def _round_half_up(value: float) -> int:

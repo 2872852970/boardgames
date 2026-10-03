@@ -39,6 +39,21 @@ class QuoridorGame(Game[QuoridorState, Move]):
     key = "quoridor"
     display_name = "步步为营"
 
+    settings_map = {
+        "board_size": "size",
+        "walls_per_player": "walls",
+        "first_player": "first_player",
+    }
+
+    tagline = "Quoridor · 墙棋"
+    summary = "每人带十面墙抢先抵达对面底线，墙会挡住对手的去路。"
+    rules = (
+        "每回合二选一：走子一格，或放一面长两格的墙",
+        "先抵达对方底线者胜；墙不能重叠、不能交叉成十字",
+        "任何一面墙都不许把双方任一方完全封死",
+    )
+    icon = "board"
+
     def __init__(
         self,
         size: int = DEFAULT_SIZE,

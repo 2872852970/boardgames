@@ -8,6 +8,7 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from boardgames.ai import AIEngine, AIWorker, SearchStats, get_engine
 from boardgames.core.game import Game
@@ -62,18 +63,24 @@ class GameSession:
     # ------------------------------------------------------------------ #
 
     def _build_game(self) -> Game:
-        """按当前设置实例化规则引擎（棋盘尺寸 / 墙数 / 先手都可配置）。"""
-        base = self.registry.get(self.game_key)
-        kwargs = {
-            "size": int(self.settings.get("board_size")),
-            "walls": int(self.settings.get("walls_per_player")),
-            "first_player": self._resolve_first_player(),
+        """按当前设置实例化规则引擎。
+
+        参数映射由各棋类自己声明（``Game.settings_map``：settings 键 → 构造参数名），
+        因此这里不需要知道任何具体棋类的存在。
+
+        早期版本这里给构造器硬传 ``size=/walls=/first_player=`` 并用
+        ``except TypeError`` 兜底给不支持的棋类 —— 那个 except 会把两种完全不同的
+        错误混为一谈：参数名写错、和游戏本身不读该参数。实测还导致两个问题：
+        设 ``first_player=p2`` 被静默丢弃，以及返回注册表里的**共享单例**
+        （跨对局状态污染）。现在改为显式声明，未声明的参数不会被误传。
+        """
+        cls = type(self.registry.get(self.game_key))
+        kwargs: dict[str, Any] = {
+            param: self.settings.get(key) for key, param in cls.settings_map.items()
         }
-        try:
-            return type(base)(**kwargs)
-        except TypeError:
-            # 其他棋类不一定接受这些参数（扩展点：改成它自己的构造方式）
-            return base
+        if "first_player" in cls.settings_map:
+            kwargs["first_player"] = self._resolve_first_player()
+        return cls(**kwargs)
 
     def _resolve_first_player(self) -> int:
         choice = self.settings.get("first_player")

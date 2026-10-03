@@ -41,14 +41,22 @@ def test_right_click_ignored_when_ai_is_playing(make_window):
 
 
 def test_escape_leaves_wall_mode_before_quitting(make_window):
+    """Esc 是三级的：退放墙模式 → 回大厅 → （在大厅里）退出程序。"""
     window = make_window(mode="pvp")
     _wall_mode(window)
 
     pygame.event.post(key_event(pygame.K_ESCAPE))
     window._handle_events()
-    assert window.running is True, "Esc 应当先退出放墙模式，而不是退出游戏"
+    assert window.running is True, "Esc 应当先退出放墙模式，而不是回大厅"
     assert window.view_state.extra[WALL_MODE_KEY] is False
 
+    # 没有放墙模式时，Esc 回到大厅（而不是直接退出程序）
+    pygame.event.post(key_event(pygame.K_ESCAPE))
+    window._handle_events()
+    assert window.running is True
+    assert window.scene is window.lobby, "Esc 应当回到游戏选择大厅"
+
+    # 大厅里再按 Esc 才真正退出
     pygame.event.post(key_event(pygame.K_ESCAPE))
     window._handle_events()
     assert window.running is False

@@ -46,6 +46,23 @@ class Game[S: State, M: Move](ABC):
     #: 中文展示名。
     display_name: ClassVar[str]
 
+    #: settings 键 → 构造函数参数名。空 dict 表示该游戏不读任何设置参数。
+    #:
+    #: :class:`~boardgames.controller.session.GameSession` 靠它把侧栏参数注入规则引擎。
+    #: 必须是纯 ClassVar（不能 import settings）——``settings.store`` 已经依赖
+    #: ``ai.engine``，core 再反向 import 会成环。
+    settings_map: ClassVar[Mapping[str, str]] = {}
+
+    # ---- 大厅卡片元数据（纯数据，供游戏选择大厅使用） ----
+    #: 副标题，例如 ``"Quoridor · 墙棋"``。
+    tagline: ClassVar[str] = ""
+    #: 一句话简介。
+    summary: ClassVar[str] = ""
+    #: 玩法要点（每条一行）。
+    rules: ClassVar[tuple[str, ...]] = ()
+    #: 卡片图标样式：``"board"`` / ``"drop"`` / ``"dots"``（由大厅负责绘制）。
+    icon: ClassVar[str] = "dots"
+
     # ---- 基本信息 ----
 
     @abstractmethod

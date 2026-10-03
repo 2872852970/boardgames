@@ -53,6 +53,9 @@ class Status:
     current_player: int | None = None
     player_types: tuple[str, str] = ("human", "human")
     walls_left: tuple[int, int] = (10, 10)
+    #: 每方的自定义详情（**只放数值部分**，如 "墙 10" / "已落 12 子"）；
+    #: 类型标签由侧栏自己拼上去。留空则回退到 ``walls_left``。
+    player_details: tuple[str, str] = ("", "")
     is_thinking: bool = False
     thinking_player: int = 0
     thinking_elapsed_ms: float = 0.0
@@ -81,10 +84,17 @@ class Sidebar:
         settings: Settings,
         on_setting: Callable[[str, Any], None],
         on_action: Callable[[str, Any], None],
+        *,
+        game_key: str = "quoridor",
+        game_title: str = "步步为营",
+        game_tagline: str = "Quoridor · 墙棋",
     ) -> None:
         self.settings = settings
         self.on_setting = on_setting
         self.on_action = on_action
+        self.game_key = game_key
+        self.game_title = game_title
+        self.game_tagline = game_tagline
         self.rect = pygame.Rect(0, 0, theme.SIDEBAR_W, theme.WINDOW_H)
         self.scroll = 0.0
         self.max_scroll = 0.0
@@ -137,10 +147,11 @@ class Sidebar:
 
         self.footer_buttons = [
             Button("新局", lambda: self.on_action("new_game", None), variant="primary"),
-            Button("悔棋", lambda: self.on_action("undo", None)),
+            Button("悔棋", lambda: self.on_action("undo", None), key="undo"),
             Button("单步", lambda: self.on_action("step", None), key="step"),
             Button("暂停", lambda: self.on_action("toggle_pause", None), key="pause"),
-            Button("认输", lambda: self.on_action("resign", None), variant="danger"),
+            Button("大厅", lambda: self.on_action("lobby", None), key="lobby"),
+            Button("认输", lambda: self.on_action("resign", None), variant="danger", key="resign"),
         ]
 
     def _make_widget(self, spec) -> Widget | None:
@@ -170,6 +181,16 @@ class Sidebar:
                 widget.set_value_silently(self.settings.get(widget.key))
         if self._mode_widget is not None:
             self._mode_widget.set_value_silently(self.settings.get("mode"))
+
+    def set_game(self, game_key: str, title: str, tagline: str) -> None:
+        """切换棋类：改标题，并让参数按新棋类重新过滤（widget 本身已建好，只需刷可见性）。"""
+        self.game_key = game_key
+        self.game_title = title
+        self.game_tagline = tagline
+        # 上一轮正在编辑的输入框可能属于新棋类里不存在的参数，直接收工
+        self._end_editing(commit=True)
+        self.scroll = 0.0
+        self._layout_content()
 
     # ------------------------------------------------------------------ #
     # 数值输入框
@@ -214,6 +235,10 @@ class Sidebar:
         return {kind for kind in self.status.player_types if kind != "human"}
 
     def _spec_applicable(self, spec) -> bool:
+        # 游戏维度过滤优先：只对某个棋类有意义的参数（墙数、列数、墙槽位…）
+        # 不该在别的棋类的侧栏里露出来。
+        if spec.games and self.game_key not in spec.games:
+            return False
         kinds = self._ai_kinds()
         if spec.needs_engine:
             return spec.needs_engine in kinds
@@ -425,20 +450,21 @@ class Sidebar:
         for widget in self._visible_widgets():
             widget.update(dt_ms, mouse if inside and widget.rect.colliderect(viewport) else (-1, -1))
         for button in self._visible_footer():
-            button.enabled = self._footer_enabled(button.label)
+            button.enabled = self._footer_enabled(button)
             button.update(dt_ms, mouse)
         if self._mode_widget is not None:
             self._mode_widget.update(dt_ms, mouse)
 
-    def _footer_enabled(self, label: str) -> bool:
-        if label == "悔棋":
+    def _footer_enabled(self, button: Button) -> bool:
+        # 按 button.key 分派（label 会被改文案，key 才是稳定标识）
+        if button.key == "undo":
             return self.status.can_undo
-        if label == "认输":
+        if button.key == "resign":
             return not self.status.is_over
-        if label == "单步":
+        if button.key == "step":
             # 只有"暂停中"才需要单步
             return self.status.paused and not self.status.is_over
-        if label == "暂停":
+        if button.key == "pause":
             return not self.status.is_over
         return True
 
@@ -459,9 +485,9 @@ class Sidebar:
         self._draw_dropdown_overlays(surface, fonts)
 
     def _draw_header(self, surface: pygame.Surface, fonts: FontBook) -> None:
-        render.text(surface, fonts.get(20, bold=True), "步步为营",
+        render.text(surface, fonts.get(20, bold=True), self.game_title,
                     (self._content_x, self.rect.y + TITLE_Y), theme.TEXT)
-        render.text(surface, fonts.get(12), "Quoridor · 墙棋",
+        render.text(surface, fonts.get(12), self.game_tagline,
                     (self._content_x, self.rect.y + SUBTITLE_Y), theme.TEXT_FAINT)
         self._draw_turn(surface, fonts)
         if self._mode_widget is not None:
@@ -538,8 +564,10 @@ class Sidebar:
             render.text(surface, fonts.get(13), f"玩家 {player + 1}", (row.x + 22, row.centery),
                         theme.TEXT, baseline="middle")
             kind = status.player_types[player]
-            detail = f"{PLAYER_TYPE_LABELS.get(kind, kind)} · 墙 {status.walls_left[player]}"
-            render.text(surface, fonts.get(12), detail, (row.right, row.centery), theme.TEXT_DIM,
+            # 详情（"墙 10" / "已落 12 子"）由窗口按当前棋类填；留空则回退到墙棋的表述
+            detail = status.player_details[player] or f"墙 {status.walls_left[player]}"
+            label = f"{PLAYER_TYPE_LABELS.get(kind, kind)} · {detail}"
+            render.text(surface, fonts.get(12), label, (row.right, row.centery), theme.TEXT_DIM,
                         align="right", baseline="middle")
 
     def _draw_thinking(self, surface: pygame.Surface, fonts: FontBook, viewport: pygame.Rect) -> None:

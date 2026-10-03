@@ -1,21 +1,28 @@
 # 项目长期记忆：棋类游戏（boardgames）
 
-可扩展的 Python 桌面棋类游戏框架。首个游戏：**步步为营（墙棋 / Quoridor）**。
+可扩展的 Python 桌面棋类游戏框架。已内置两个游戏：**步步为营（墙棋 / Quoridor）**
+与**重力四子棋（Connect Four）**。
 
 ## 运行方式
 
 ```bash
-uv sync && uv run boardgames     # 启动
-uv run pytest                    # 测试（138 项）
+uv sync && uv run boardgames     # 启动（先进大厅）
+uv run pytest                    # 测试（233 项）
 uv run ruff check src tests scripts
 uv run python scripts/benchmark_ai.py
-uv run boardgames --headless --screenshot out.png --demo 20   # 无头截图（SDL dummy）
-uv run boardgames --window 1000x640                           # 强制窗口尺寸调试布局
-uv run boardgames --hover wall-h                              # 截图时模拟悬停（放墙/走子预览）
+uv run boardgames --game connect4 --cols 8 --rows 7    # 直接进四子棋
+uv run boardgames --scene match                         # 跳过大厅
+uv run boardgames --headless --screenshot out.png --demo 20 --scene match   # 无头截图
+uv run boardgames --headless --screenshot lobby.png --scene lobby          # 拍大厅
+uv run boardgames --window 1000x640                     # 强制窗口尺寸调试布局
+uv run boardgames --hover wall-h --scene match          # 截图时模拟悬停（按棋类分派）
 ```
 
-UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests/ui/helpers.py`
+UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具，支持 `game_key=` /
+`start_scene=` 关键字，会从 overrides 里抠出来传给 `GameWindow`）与 `tests/ui/helpers.py`
 （模拟鼠标/键盘），新加 UI 测试直接 `from helpers import ...` 即可。
+⚠️ 造局面优先用 `tests/games/connect4/conftest.py` 的 `make_at(cols, rows, {(col,row):值})`
+——按坐标写、其余自动填充，能保证重力；手写棋盘图字符串极易抄错。
 
 版本管理：git（分支 `master`）。`.venv/`、`config/settings.json`、`.workbuddy/artifacts/`
 已忽略；`.workbuddy/memory/` 纳入版本控制。
@@ -37,13 +44,92 @@ UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests
 
 ## 新增一个棋类（扩展点）
 
-1. `games/<key>/`：`State`(不可变 + `zobrist_hash`) / `Move`(可哈希) /
+1. `games/<key>/`：`State`(不可变 + `zobrist_hash`) / `Move`(`@dataclass(frozen=True, slots=True)`) /
    `Game`(`initial_state`、`legal_moves`、`is_legal`、`apply`、`evaluate`、`rollout_move`)；
    用 `SearchOptions` 在搜索期裁剪组合爆炸的着法。
-2. 实现 `ui/board_view.py` 的 `BoardView` 协议（`layout/draw/handle_click/handle_motion/animate/update/reset/set_last_move`）。
+2. 实现 `ui/board_view.py` 的 `BoardView` 协议（`layout/draw/handle_click/handle_motion/animate/update/is_animating/reset/set_last_move`）。
+   可选实现 `hover_hint()` / `hud_hint()` 拿专属提示文案（窗口用 `hasattr` 检测）。
+   **视图必须保留 `origin` 与 `cell` 两个属性名** —— `tests/ui/helpers.py:pos_for()` 依赖。
 3. `app.py: register_builtin_views()` 里 `registry.register_view(key, factory)`；
    `core/registry.build_default_registry()` 里 `registry.register(game)`。
-4. 侧栏、主题、控件、AI 调度、悔棋全部自动复用（参数加在 `settings/schema.py` 的 `SPECS`）。
+4. 侧栏参数加在 `settings/schema.py` 的 `SPECS`，**必须打 `games=(key,)` 标**。
+5. 大厅卡片**零改动** —— 卡片数据来自 `Game` 的 `tagline` / `summary` / `rules` / `icon` ClassVar。
+
+侧栏、主题、控件、AI 调度、悔棋、后台搜索线程、大厅全部自动复用。
+
+## 构造参数注入：Game.settings_map
+
+`GameSession._build_game` 早期版本给构造器硬传 `size=/walls=/first_player=` 并
+`except TypeError` 兜底 —— **实测会静默丢弃 `first_player=p2`，且回退到注册表的共享单例**
+（跨对局状态污染）。现在改为各 `Game` 自己声明：
+
+```python
+settings_map: ClassVar[Mapping[str, str]] = {}   # settings 键 -> 构造参数名
+```
+
+必须是纯 `ClassVar`（core 不能 import settings —— `settings.store` 已依赖 `ai.engine`，
+反向 import 会成环）。
+
+## Connect Four 规则实现要点
+
+- 坐标 `(col, row)`，**row 0 是最底行**。棋盘存一维 `cells`（下标 `row*cols+col`，
+  0 空 / 1 玩家1 / 2 玩家2）+ **冗余** `heights`（投子目标行 = `heights[col]`，
+  威胁检测要遍历所有列的下一格，从 `cells` 推导是 O(cols×rows)，rollout 里被调用上百万次）。
+- **`winner_player` 存玩家索引（0/1）而不是棋子值（1/2）**。引擎会拿 `state.winner()`
+  直接和玩家索引比较，用棋子值会让符号整个反过来 —— 实测 minimax 深度 1~6 全部找不到
+  "三连直接赢"这种必胜手。
+- **字段绝不能叫 `winner`**：`State.winner()` 是 ABC 抽象方法，同名字段会遮蔽它，
+  `minimax` 里 `state.winner()` 会拿到非可调用对象。
+- `scan_win` **落点两侧的连子数必须相加**再比较 `>= 4`。写成「正反两方向各自独立计数再判断」
+  会让"落点补上横四/斜四中间那一子"（`X.XX` → 投中间变 `XXXX`）永远判不出胜负。
+- `is_terminal()` 用 `all(h >= rows)` 而非 `ply >= cols*rows` —— 手搭测试局面时
+  `ply` 可能与棋盘不同步。
+- `zobrist_hash` 排除 `heights` / `ply` / `winner_player`（都能从 `cells` 推出）。
+- **收敛性天然成立**：每步必然 `ply += 1` 且棋盘不可逆填满，任何合法序列都在
+  ≤ `cols*rows` 步内终止 —— 不像墙棋棋子能来回走，振荡在数学上不可能发生。
+- **`legal_moves` 必须完全忽略 `max_branch` 与 `include_walls`**。分支因子本来就小；
+  而 minimax 的 `include_walls = ply < wall_depth` 是为墙棋的墙分支设计的，
+  当成"裁剪着法"会让深度 ≥2 的节点只剩 ≤1 个着法，棋力直接崩却查不出原因。
+- **不能有 tempo（节奏）项**：墙棋里"轮到谁走"有先后优势，四子棋没有（先手优势已体现在
+  先落子的棋子上）。加这一项会破坏 `evaluate(s,0) == -evaluate(s,1)`，minimax 在双方都
+  不占便宜的局面里乱选。同理攻/防威胁必须**共用一个权重**（`w_threat`）。
+- 评估分**对称性有回归测试**锁住（`evaluate(s,0) == -evaluate(s,1)`）。
+
+## 场景架构（大厅 ↔ 对局）
+
+- `ui/scene.py` 的 `Scene` Protocol：`on_enter` / `on_exit` / `layout` / `handle_event` / `update` / `draw`。
+- `GameWindow` **只**是窗口宿主（screen / clock / QUIT / VIDEORESIZE / 设置落盘），其余全下发 scene。
+- `MatchScene` 持 session / view / sidebar / view_state / toast；`LobbyScene` 持卡片。
+- **转发 property 是保住测试的关键**：`tests/ui/*.py` 有 205 处 `window.xxx` 访问，
+  Python 属性解析不穿透到 scene，所以 `GameWindow` 暴露 `session` / `view` / `sidebar` /
+  `view_state` / `board_area` / `sidebar_rect` / `toast` 与 `_update` / `_draw` /
+  `_on_setting` / `_on_action` / `_handle_events` 全部转发给 `match`。
+- **`GameWindow(start_scene=...)` 默认必须是 `"match"`**（不是 lobby），这样既有
+  `make_window()` 夹具零改动。生产入口 `app.main` 显式传 `start_scene="lobby"`。
+  默认反直觉，已在 docstring 注明原因。
+- **scene 必须每帧从 `window.screen` 读 surface**，绝不能缓存引用 ——
+  `test_layout_fits_a_small_window` 会直接 `set_mode` 换掉窗口表面。
+- 回大厅**必须先 `session.cancel_thinking()`**（`MatchScene.on_exit` 做的），
+  否则后台 AI 线程继续跑并持有旧局面引用。
+- `Esc` 语义是**三级**：退放墙模式 → 回大厅 → （大厅里）退出程序。
+- `PLACEMENT_MODE_KEY` 定义在 `ui/board_view.py`，`quoridor/view.py` 保留
+  `WALL_MODE_KEY = PLACEMENT_MODE_KEY` 同值别名 → 8 个引用它的测试零改动。
+
+## 弹跳下落动画（`ui/animation.py: BounceTween`）
+
+物理积分而非补间曲线。三条都是必需项，不是优化：
+
+- **固定子步积分 1/240 秒**。朴素半隐式欧拉在 `dt=33ms`（掉帧）时反弹 440 次、
+  持续 4 秒、**锁死输入**。`window.run()` 里 `dt_ms = min(dt_ms, 100)` 的上限意味着
+  切后台回来必踩。
+- **重力按落差归一化**（`gravity ∝ drop_px`），否则底部落子 458ms、顶部 1458ms。
+  用「反解重力让实际时长逼近 duration_s」实现，缩放钳在 `[0.35, 2.5]`。
+- **超时兜底必须在子步循环之外**：若棋子一直悬在半空、始终碰不到 `drop_px`，
+  落在触底分支里的超时判定永远不触发，会永远播下去并锁死输入。
+- `done` 不能只看 `_v == 0`（初始速度就是 0），要用独立的 `_landed` 标志。
+- 动画**不排队**：新动画直接顶掉旧的。AI 双方连续落子时排队会累积延迟。
+- 只给**最后一手**的那枚棋子加偏移（`DropMove` 存了 `row` 和 `player` 供认领）。
+- `duration_ms == 0` → 不播放（沿用 QuoridorView 的约定）。
 
 ## Quoridor 规则实现要点（最易错）
 
@@ -65,6 +151,10 @@ UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests
 - 调参默认值（实测）：minimax depth 4 / wall_depth 2 / 1200ms；
   mcts 4000 次迭代上限 / 1200ms / max_branch 8 / rollout_cap 40 / p_wall 0.08。
   MCTS 实测 1.2s ≈ 620~720 次迭代；Minimax depth 4 ≈ 80ms。
+- **`ROLLOUT_VALUE_SCALE = 600` 是给墙棋调的**（墙棋 `w_path=100`/步，评估分轻松上百）。
+  四子棋评估分小得多，但**实测没问题**（2026-10-03：minimax depth6 vs mcts 4000iter
+  各 8 局 4:4，0 平；两者都能抓住必胜与必防）。四子棋的 rollout 策略本身够强
+  （贪心 + 威胁优先 + 中心加权随机），回报仍有区分度。**不要动这个常量**。
 
 ## UI 层坑位（改侧栏 / 事件循环前必读）
 
@@ -110,18 +200,24 @@ UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests
 - `request_step()` 置 `stepping = True`；`poll()` 落子后把 `stepping` 复位，`paused` 不变，
   因此单步走完仍然暂停。侧栏在 eve 模式才显示「单步」「暂停」两个按钮。
 
-## 侧栏按模式精简 + 数值输入
+## 侧栏按模式 + 按游戏精简 + 数值输入
 
-- `ParamSpec` 有 `needs_ai` / `needs_engine` 两个可见性条件；`Sidebar` 从
-  `status.player_types` 解析"实际参战引擎集合"，据此过滤分组与单个参数。
-  新增参数时记得标好归属，否则会在不该出现的模式下露出来。
+- `ParamSpec` 有 `needs_ai` / `needs_engine`（按引擎过滤）+ **`games`（按棋类过滤）**
+  三个可见性条件；`Sidebar` 从 `status.player_types` 解析"实际参战引擎集合"，
+  从构造参数 `game_key` 解析当前棋类，据此过滤分组与单个参数。
+  **新增参数时务必标好 `games=`，否则会在别的棋类侧栏里露出来。**
 - **双方信息固定在头部**（`PLAYERS_Y`），不参与滚动 —— 侧栏滚动区只放参数。
   `HEADER_H = 178`，改头部高度时记得同步 `theme.MIN_WINDOW_H` 的可用性。
+- **玩家行详情泛化**：`Status.player_details` 只放**数值部分**（"墙 10" / "已落 12 子"），
+  类型标签由侧栏自己拼上去；留空回退到 `walls_left`。
+- **侧栏标题/副标题**从 `game.display_name` / `game.tagline` 取（`Sidebar.set_game()`）。
 - **数值参数可点击输入**：`Slider.value_box` 是右侧的数值框，点它进入编辑态；
   `Sidebar.handle_key()` 在编辑时**接管所有键盘事件**并返回 True，
   否则 Esc / N / U 会误触发退出、新局、悔棋。
   `Sidebar._editing` 保证同时只有一个在编辑，点其他地方 = 确认。
-
+- 底栏 6 个按钮（最小侧栏 316px 下每格 40px，中文两字 28px 放得下）；
+  `Button.draw` 在按钮宽度不足时会降一档字号。`_footer_enabled` 按 `button.key` 分派
+  （label 会被改文案，key 才稳定）。
 
 ## 用户偏好（本次交互确认）
 
@@ -129,4 +225,7 @@ UI 测试公用件在 `tests/ui/conftest.py`（`make_window` 夹具）与 `tests
 - 必须同时有：双人同屏、人机、AI 自对弈；AI 参数在**侧栏实时可调**。
 - 棋盘尺寸/墙数**可配置**（默认 9×9 + 10 墙）。
 - 墙规则取**严格标准**（禁重叠 + 禁交叉）；先手可选（默认玩家 1）。
-- 本期只做步步为营，但架构要留好扩展点。
+- **启动即游戏选择大厅**（卡片网格 + 简介），侧栏底栏有「大厅」按钮可返回。
+- 四子棋：列 / 行**可调**（5-12 / 4-10），**连线数固定 4**。
+- AI **复用现有引擎**（minimax + mcts）+ 棋类专属评估函数，不另建位运算引擎。
+- 动画要**真的物理**（重力弹跳），不要 ease-out 补间凑。
