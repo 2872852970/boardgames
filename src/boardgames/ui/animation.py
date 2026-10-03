@@ -92,7 +92,7 @@ class BounceTween:
     _time_scale_bounds: tuple[float, float] = (0.35, 2.5)
 
     _t: float = 0.0
-    _y: float = 0.0                 # 相对静止位置的偏移，>= 0
+    _y: float = 0.0                 # **已经落下的距离**（0 起，到 drop_px 触底）
     _v: float = 0.0
     gravity: float = 0.0
     _landed: bool = False           # 是否已落定（不能只看速度：初始速度就是 0）
@@ -100,9 +100,9 @@ class BounceTween:
 
     def __post_init__(self) -> None:
         if self.drop_px <= 0 or self.duration_s <= 0:
-            # 退化情况：直接处于落定状态
+            # 退化情况：直接处于落定状态（_y 要放到 drop_px，见 offset()）
             self.gravity = 0.0
-            self._y = 0.0
+            self._y = self.drop_px
             self._v = 0.0
             self._landed = True
             return
@@ -151,8 +151,15 @@ class BounceTween:
         self._landed = True
 
     def offset(self) -> float:
-        """绘制时的纵向偏移（**向上为负**）。"""
-        return -self._y
+        """绘制时的纵向偏移（**向上为负**，相对静止位置）。
+
+        ``_y`` 是"已经落下的距离"，不是"离静止位置多高"，所以偏移是
+        ``_y - drop_px``：起点在静止位置**上方** ``drop_px``，落地回到 ``0``。
+
+        写成 ``-self._y`` 会让棋子从槽位里**往上飞**出去（起点恰好落在
+        目标格上、然后一路升到棋盘外面），那是"重力方向反了"的经典症状。
+        """
+        return self._y - self.drop_px
 
     @property
     def progress(self) -> float:

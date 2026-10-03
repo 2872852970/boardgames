@@ -35,12 +35,32 @@ def test_zero_drop_never_plays():
     assert tween.done
 
 
-def test_offset_starts_at_zero_and_ends_at_minus_drop():
+def test_offset_starts_above_and_ends_at_rest():
+    """起点在静止位置**上方** drop_px，落定后回到静止位置。
+
+    反过来（起点 0、终点 -drop_px）就是"重力方向反了"：棋子会从槽位里
+    往上飞出去，最后悬在棋盘上空。
+    """
     tween = BounceTween(drop_px=300.0, duration_s=0.85)
-    assert tween.offset() == 0.0
-    _settle(tween, 0.016)
     assert tween.offset() == -300.0
+    _settle(tween, 0.016)
+    assert tween.offset() == 0.0
     assert tween.progress == 1.0
+
+
+def test_offset_descends_monotonically_until_first_impact():
+    """第一段下落里 offset 必须**单调向静止位置逼近**（一路向下）。"""
+    tween = BounceTween(drop_px=300.0, duration_s=0.85)
+    prev = tween.offset()
+    steps = 0
+    while not tween.done and tween._v >= 0:
+        tween.update(1 / 240)
+        now = tween.offset()
+        assert now >= prev - 1e-6, f"下落中 offset 反向: {prev} -> {now}"
+        prev = now
+        steps += 1
+    assert steps > 20, "第一段下落太短，参数不对"
+    assert abs(prev) < 1e-6, f"触底时应当正好回到静止位置，实际 {prev}"
 
 
 def test_is_dt_independent():

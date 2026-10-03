@@ -111,9 +111,14 @@ class Connect4State(State):
         return h if h < self.rows else None
 
     def count_pieces(self) -> tuple[int, int]:
-        """双方的已落子数。"""
+        """双方的已落子数。
+
+        **别用"总格数 − 已落子数"当对手的棋子数** —— 那是**空格数**。
+        空盘 7×6 时它会报出"对手已落 42 子"，侧栏直接显示成
+        "已落 42 子"（曾经就是这么错的）。
+        """
         p0 = sum(1 for v in self.cells if v == 1)
-        return p0, len(self.cells) - self.heights_total() - p0
+        return p0, self.heights_total() - p0
 
     def heights_total(self) -> int:
         return sum(self.heights)

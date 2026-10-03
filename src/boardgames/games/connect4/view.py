@@ -2,8 +2,14 @@
 
 **只用鼠标**：移动到某一列就预览棋子会落到哪一格，点击即投子。
 
+**行号是反的**：局面（:class:`Connect4State`）里 ``row == 0`` 是**最底行**，
+重力把人往 0 压；屏幕 y 却向下增大。翻转只在 :meth:`Connect4View.screen_row`
+一处做，其它地方一律用局面坐标 —— 两处各翻一次就等于没翻，
+表现出来就是"棋子全堆在棋盘顶部"（曾经就是这么错的）。
+
 落子动画走 :class:`~boardgames.ui.animation.BounceTween` ——
 自由落体 → 触底回弹 → 阻尼衰减，是真的积分运动方程而不是插值曲线。
+所有棋子都从棋盘上沿之上同一高度进场，落点越低掉得越远；
 只给**最后一手**的那枚棋子加纵向偏移，其余棋子静止不动。
 """
 
@@ -21,9 +27,9 @@ from boardgames.ui.animation import BounceTween
 from boardgames.ui.board_view import ViewState
 from boardgames.ui.fonts import FontBook
 
-#: 棋子从棋盘顶格再往上多少格开始下落。
-#: 不能从 0 开始 —— 否则第一帧看起来像"棋子凭空出现"。
-DROP_START_CELLS = 1.5
+#: 棋子进入画面的高度：**棋盘上沿之上**多少格（所有棋子都从这个高度掉下来，
+#: 落点越低掉得越远）。不能从 0 开始 —— 否则第一帧看起来像"棋子凭空出现"。
+DROP_ENTRY_CELLS = 0.25
 #: 空格圆窝的直径占格子的比例
 SOCKET_RATIO = 0.86
 
@@ -77,10 +83,19 @@ class Connect4View:
         self.cols, self.rows = cols, rows
         self.layout(self.area)
 
+    def screen_row(self, row: int) -> int:
+        """局面行号 → 屏幕行号（自上而下 0..rows-1）。
+
+        **坐标是反的**：局面里 ``row == 0`` 是最底行（重力把人往 0 压），
+        而屏幕 y 向下增大。整个视图只能在这一处翻转，别在别处再翻一次。
+        """
+        return self.rows - 1 - row
+
     def cell_center(self, col: int, row: int) -> tuple[int, int]:
+        """棋格 ``(col, row)``（**局面坐标**）的屏幕中心。"""
         return (
             self.origin[0] + int((col + 0.5) * self.cell),
-            self.origin[1] + int((row + 0.5) * self.cell),
+            self.origin[1] + int((self.screen_row(row) + 0.5) * self.cell),
         )
 
     def board_rect(self) -> pygame.Rect:
@@ -150,11 +165,19 @@ class Connect4View:
     # 动画
     # ------------------------------------------------------------------ #
 
+    def drop_px_for(self, row: int) -> float:
+        """从棋盘上沿掉到第 ``row`` 行需要走多少像素。
+
+        所有棋子都从**同一个高度**（棋盘上沿往上 ``DROP_ENTRY_CELLS`` 格）进场，
+        所以落点越低（``row`` 越小）掉得越远 —— 和真棋具从顶口投子一致。
+        """
+        screen_row = max(0, self.screen_row(row))
+        return self.cell * (screen_row + 0.5 + DROP_ENTRY_CELLS)
+
     def animate(self, move: Move, duration_ms: int) -> None:
         if duration_ms <= 0 or not isinstance(move, DropMove):
             return
-        # 从该列顶格再往上 DROP_START_CELLS 格落下
-        drop_px = self.cell * (DROP_START_CELLS + 0.5)
+        drop_px = self.drop_px_for(move.row)
         # 刻意**不排队**：已有动画在播就直接结算掉再起新的。
         # AI 双方连续落子时排队会累积延迟，观感反而更差。
         self._anim = _DropAnim(move, BounceTween(drop_px=drop_px, duration_s=duration_ms / 1000))
@@ -210,7 +233,7 @@ class Connect4View:
             self._draw_win_line(surface, state)
         if interactive:
             self._draw_ghost(surface, state)
-        self._draw_discs(surface, state, interactive)
+        self._draw_discs(surface, state)
 
     def _draw_sockets(self, surface, state: Connect4State) -> None:
         """空格的圆窝。"""
@@ -221,25 +244,49 @@ class Connect4View:
                 color = theme.CELL if (row + col) % 2 == 0 else theme.CELL_ALT
                 pygame.draw.circle(surface, color, center, radius)
 
-    def _draw_ghost(self, surface, state: Connect4State) -> None:
-        """悬停预览：在落点上方半格画一个半透明的棋子。"""
+    def ghost_center(self, state: Connect4State) -> tuple[int, int] | None:
+        """落子预览的中心 = **落点槽位的中心**，没有悬停时返回 ``None``。
+
+        必须严丝合缝地落在槽位里：一旦为了"浮在空中"给个纵向偏移，
+        预览就会压在槽位边缘上，看着像错位。
+        """
         if self._hover_col is None:
+            return None
+        return self.cell_center(self._hover_col, state.heights[self._hover_col])
+
+    def _draw_ghost(self, surface, state: Connect4State) -> None:
+        """悬停预览：在落点槽位里画一个半透明的棋子（与圆窝同尺寸、同心）。"""
+        center = self.ghost_center(state)
+        if center is None:
             return
-        row = state.heights[self._hover_col]
-        who = state.current + 1
-        color = theme.PLAYER_COLORS[who]
-        center = (
-            self.cell_center(self._hover_col, row)[0],
-            self.cell_center(self._hover_col, row)[1] - int(self.cell * 0.12),
-        )
+        # 索引是**玩家号 0/1**，不是棋子值 1/2（那是 cells 里的约定）
+        player = state.current
         radius = self.socket_radius
         layer = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-        pygame.draw.circle(layer, (*color, 150), (radius, radius), radius)
-        pygame.draw.circle(layer, (*theme.PLAYER_DARK[who], 200), (radius, radius), radius, 2)
+        pygame.draw.circle(layer, (*theme.PLAYER_COLORS[player], 150), (radius, radius), radius)
+        pygame.draw.circle(
+            layer, (*theme.PLAYER_DARK[player], 200), (radius, radius), radius, 2
+        )
         surface.blit(layer, (center[0] - radius, center[1] - radius))
 
-    def _draw_discs(self, surface, state: Connect4State, interactive: bool) -> None:
+    def _disc_is_last_move(self, col: int, row: int, player: int) -> bool:
+        """这一枚是不是"刚下上去的那一手"（高亮用）。"""
+        last = self._last_move
+        return (
+            isinstance(last, DropMove)
+            and last.col == col
+            and last.row == row
+            and last.player == player
+        )
+
+    def _draw_discs(self, surface, state: Connect4State) -> None:
+        """画所有棋子。
+
+        正在下落的那一枚**最后画**：它要从棋盘上沿一路穿过已有棋子掉到落点，
+        先画就会被沿途的棋子盖住，看着像钻进棋盘里消失了。
+        """
         anim = self._anim
+        falling: tuple[int, int, int] | None = None
         for row in range(state.rows):
             for col in range(state.cols):
                 who = state.cells[row * state.cols + col]
@@ -248,28 +295,33 @@ class Connect4View:
                 player = who - 1
                 # 只有"最后一手的那一枚"才带偏移（照抄 Quoridor 的判据结构：
                 # state 已 apply，靠 Move 里的 row/player 认领）
-                dy = 0
                 if (
                     anim is not None
                     and anim.move.row == row
                     and anim.move.col == col
                     and anim.move.player == player
                 ):
-                    dy = anim.tween.offset()
-                active = interactive and player == state.current_player and not state.is_terminal()
+                    falling = (col, row, player)
+                    continue
                 self._draw_disc(
-                    surface, self.cell_center(col, row), player, dy,
-                    active=active,
-                    shadow_scale=anim.tween.progress if (anim and dy) else 1.0,
+                    surface, self.cell_center(col, row), player,
+                    active=self._disc_is_last_move(col, row, player),
                 )
+        if anim is not None and falling is not None:
+            col, row, player = falling
+            self._draw_disc(
+                surface, self.cell_center(col, row), player, anim.tween.offset(),
+                active=self._disc_is_last_move(col, row, player),
+                shadow_scale=anim.tween.progress,
+            )
 
     def _draw_win_line(
         self, surface, state: Connect4State, *, active: bool = True
     ) -> None:
-        if not self._win_line or not active:
+        if not self._win_line or not active or state.winner_player is None:
             return
-        who = state.winner_player + 1
-        color = theme.PLAYER_COLORS[who]
+        # 同上：winner_player 是玩家号 0/1，直接当调色板索引用
+        color = theme.PLAYER_COLORS[state.winner_player]
         for col, row in self._win_line:
             center = self.cell_center(col, row)
             radius = self.socket_radius

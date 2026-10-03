@@ -94,6 +94,23 @@ settings_map: ClassVar[Mapping[str, str]] = {}   # settings 键 -> 构造参数�
   先落子的棋子上）。加这一项会破坏 `evaluate(s,0) == -evaluate(s,1)`，minimax 在双方都
   不占便宜的局面里乱选。同理攻/防威胁必须**共用一个权重**（`w_threat`）。
 - 评估分**对称性有回归测试**锁住（`evaluate(s,0) == -evaluate(s,1)`）。
+- **`count_pieces()` 别用"总格数 − 已落子数"算对手** —— 那是**空格数**，空盘会报"对手已落 42 子"。
+  正确写法 `heights_total() - p0`。
+- **调色板索引一律用玩家号 0/1**（`theme.PLAYER_COLORS` 只有 2 项）。写成 `棋子值 = 玩家号 + 1`
+  会让**玩家 2 悬停**（`_draw_ghost`）和**玩家 2 赢棋**（`_draw_win_line`）直接 IndexError。
+
+## Connect Four 视图（渲染层最易错）
+
+- **局面行号与屏幕行号是反的**：`row == 0` 是最底行，屏幕 y 向下增大。
+  翻转只在 `Connect4View.screen_row(row) = rows - 1 - row` 一处做，`cell_center` 内部用它。
+  **两处各翻一次 = 没翻**（症状：整盘棋子堆在棋盘顶部）。
+- **`Game` 侧只提供"谁能赢"的语义，视图不实现规则**；但渲染类 bug（上下颠倒、差半格）
+  用断言数据结构的测试**永远抓不到** —— 必须"画一帧再取像素"：
+  `surface.get_at(view.cell_center(col, 0))[:3] == theme.PLAYER_COLORS[0]`。
+- 落子预览（ghost）必须与圆窝**同心同径**：中心就是 `cell_center(col, heights[col])`，
+  半径就是 `socket_radius`。给它加"浮在上方"的纵向偏移 = 看着没对准。
+- **正在下落的那一枚要最后画**：它要穿过已有棋子掉到槽位，先画会被沿途棋子盖住。
+- 高亮跟**最后一手**（`_last_move`）走，不给当前行动方的所有棋子加光环 —— 颜色已经说明归属。
 
 ## 场景架构（大厅 ↔ 对局）
 
@@ -129,7 +146,13 @@ settings_map: ClassVar[Mapping[str, str]] = {}   # settings 键 -> 构造参数�
 - `done` 不能只看 `_v == 0`（初始速度就是 0），要用独立的 `_landed` 标志。
 - 动画**不排队**：新动画直接顶掉旧的。AI 双方连续落子时排队会累积延迟。
 - 只给**最后一手**的那枚棋子加偏移（`DropMove` 存了 `row` 和 `player` 供认领）。
+- **`offset()` 是 `_y - drop_px`，不是 `-_y`**。`_y` 存"**已经落下的距离**"（0 → `drop_px`），
+  写成 `-_y` 就等于"从槽位里往上飞出去、最后悬在棋盘上空"，也就是"重力方向反了"。
+  退化分支（`duration<=0` / `drop_px<=0`）要把 `_y` 置成 `drop_px` 才等于"已静止在槽位"。
 - `duration_ms == 0` → 不播放（沿用 QuoridorView 的约定）。
+- 四子棋的落差由 `Connect4View.drop_px_for(row)` 给：**所有棋子从棋盘上沿之上
+  `DROP_ENTRY_CELLS` 格进场，落点越低掉得越远**（真棋具就是从顶口投子）。
+  别用固定落差 —— 翻转坐标后固定落差会让棋子"在棋盘中间凭空出现"。
 
 ## Quoridor 规则实现要点（最易错）
 
