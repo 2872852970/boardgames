@@ -11,6 +11,19 @@
 * 双人对战：只留棋局设置与界面参数，AI 相关分组全部隐藏；
 * 人机 / 自对弈：只显示**实际参战**的引擎参数（Minimax 或 MCTS），
   以及评估权重（随机走子没有可调项，所以什么都不显示）。
+
+「对局双方」分组按模式换一套控件
+----------------------------------
+同一个问题以前有两种问法混在一起（"玩家 1 是什么" / "玩家 2 是什么"），
+而人机对战里玩家只关心两件事：**我执哪一方**、**电脑用哪个引擎**。
+原来的两个下拉每个都带"人类"选项，选成"人 vs 人"或"AI vs AI"会被
+:meth:`GameSession.resolved_player_types` 悄悄改掉 —— 也就是"选了没用"。
+
+所以：
+
+* **人机对战**：显示 :data:`PVE_SIDE_KEY` / :data:`PVE_AI_KEY` 两个控件，
+  它们不是独立设置，而是 ``p1_type`` / ``p2_type`` 的另一种说法；
+* **AI 自对弈**：显示 ``p1_type`` / ``p2_type``，候选里**没有"人类"**。
 """
 
 from __future__ import annotations
@@ -22,6 +35,7 @@ from typing import Any
 import pygame
 
 from boardgames.settings import (
+    AI_TYPES,
     GROUPS,
     MODE_LABELS,
     PLAYER_TYPE_LABELS,
@@ -44,6 +58,13 @@ SUBTITLE_Y = 44
 MODE_Y = 64
 PLAYERS_Y = 112
 PLAYER_ROW_H = 26
+
+#: 「人机对战」专用的两个**虚拟**控件键。
+#:
+#: 说它们"虚拟"是因为它们不出现在 :data:`SPECS` 里、也不落盘 ——
+#: 改它们等于改 ``p1_type`` / ``p2_type``（见 :meth:`Sidebar._on_pve_change`）。
+PVE_SIDE_KEY = "pve_side"
+PVE_AI_KEY = "pve_ai"
 
 
 @dataclass
@@ -133,6 +154,18 @@ class Sidebar:
             if widget is not None:
                 by_group[spec.group].append(widget)
 
+        # 人机对战的两个虚拟控件。放在 p1_type / p2_type 后面，靠
+        # ``_widget_applicable`` 按模式二选一显示。
+        self._pve_side = Dropdown(
+            PVE_SIDE_KEY, "我执", "p1", ("p1", "p2"), self._on_pve_change,
+            labels={"p1": "玩家 1", "p2": "玩家 2"},
+        )
+        self._pve_ai = Dropdown(
+            PVE_AI_KEY, "电脑 AI", "minimax", AI_TYPES, self._on_pve_change,
+            labels=PLAYER_TYPE_LABELS,
+        )
+        by_group["players"].extend([self._pve_side, self._pve_ai])
+
         self.sections = [
             _Section(gid, title, expanded.get(gid, False), by_group[gid])
             for gid, title in GROUPS
@@ -142,7 +175,7 @@ class Sidebar:
         mode_spec = next(s for s in SPECS if s.key == "mode")
         self._mode_widget = Segmented(
             mode_spec.key, "", self.settings.get("mode"), mode_spec.choices,
-            self.on_setting, labels=MODE_LABELS,
+            self._on_mode_change, labels=MODE_LABELS,
         )
 
         self.footer_buttons = [
@@ -156,7 +189,10 @@ class Sidebar:
 
     def _make_widget(self, spec) -> Widget | None:
         value = self.settings.get(spec.key)
+        # 玩家类型历史上是写死在这里的；其余 choice 参数从 spec.choice_labels 取中文标签
         labels = PLAYER_TYPE_LABELS if spec.key in {"p1_type", "p2_type"} else None
+        if labels is None and spec.choice_labels:
+            labels = dict(spec.choice_labels)
         if spec.kind == "bool":
             return Toggle(spec.key, spec.label, bool(value), self.on_setting)
         if spec.kind == "int":
@@ -175,10 +211,62 @@ class Sidebar:
             return Dropdown(spec.key, spec.label, value, spec.choices, self.on_setting, labels=labels)
         return None
 
+    def _on_mode_change(self, key: str, value) -> None:
+        """切模式时把双方类型**顺手修正到该模式说得通的状态**。
+
+        不修的话会留下"人机对战里两位都是 AI"或"自对弈里有位是人类"这种
+        自相矛盾的组合，虽然 :meth:`GameSession.resolved_player_types` 会在
+        运行时纠偏，但侧栏显示的还是那份没纠偏的值。
+        """
+        if value == "eve":
+            for pkey, fallback in (("p1_type", "minimax"), ("p2_type", "mcts")):
+                if str(self.settings.get(pkey)) == "human":
+                    self.on_setting(pkey, fallback)
+        elif value == "pve":
+            p1 = str(self.settings.get("p1_type"))
+            p2 = str(self.settings.get("p2_type"))
+            if p1 != "human" and p2 != "human":
+                self.on_setting("p1_type", "human")
+            elif p1 == "human" and p2 == "human":
+                self.on_setting("p2_type", AI_TYPES[0])
+        self.on_setting(key, value)
+
+    def _on_pve_change(self, key: str, value) -> None:
+        """把"我执 / 电脑 AI"翻译成真正落盘的 ``p1_type`` / ``p2_type``。
+
+        先写 settings 再回读虚控件的值，保证两边永远一致（比如从外部把
+        ``p1_type`` 改成 AI 时，"我执"要跟着跳到另一边）。
+        """
+        side = value if key == PVE_SIDE_KEY else self._pve_side.value
+        ai = value if key == PVE_AI_KEY else self._pve_ai.value
+        self.on_setting("p1_type", "human" if side == "p1" else ai)
+        self.on_setting("p2_type", ai if side == "p1" else "human")
+        self.sync_from_settings()
+
+    def _sync_pve_widgets(self) -> None:
+        """从 ``p1_type`` / ``p2_type`` 反推"我执 / 电脑 AI"。
+
+        反推而不是另存一份：一份状态只有一个真相，也不会出现
+        "换了模式之后两个控件互相打架"。
+        """
+        p1 = str(self.settings.get("p1_type"))
+        p2 = str(self.settings.get("p2_type"))
+        if p1 == "human" and p2 != "human":
+            side, ai = "p1", p2
+        elif p2 == "human" and p1 != "human":
+            side, ai = "p2", p1
+        else:  # 两位都是 AI（自对弈误切过来）：默认"我执玩家 1"，电脑用玩家 2 的引擎
+            side, ai = "p1", p2 if p2 != "human" else "minimax"
+        self._pve_side.set_value_silently(side)
+        self._pve_ai.set_value_silently(ai if ai in AI_TYPES else AI_TYPES[0])
+
     def sync_from_settings(self) -> None:
         for section in self.sections:
             for widget in section.widgets:
+                if widget.key in {PVE_SIDE_KEY, PVE_AI_KEY}:
+                    continue  # 虚拟控件，没有对应的设置项
                 widget.set_value_silently(self.settings.get(widget.key))
+        self._sync_pve_widgets()
         if self._mode_widget is not None:
             self._mode_widget.set_value_silently(self.settings.get("mode"))
 

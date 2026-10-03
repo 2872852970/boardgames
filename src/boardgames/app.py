@@ -24,13 +24,19 @@ _HOVER_SIMS: dict[str, Callable[[object, str], None]] = {}
 
 def register_builtin_views(registry: GameRegistry) -> None:
     """把各棋类的棋盘视图挂到注册表上（UI 相关的 import 集中在这里）。"""
+    from boardgames.games.abalone.view import make_view as abalone_view
     from boardgames.games.connect4.view import make_view as connect4_view
+    from boardgames.games.hive.view import make_view as hive_view
     from boardgames.games.quoridor.view import make_view
 
     registry.register_view("quoridor", make_view)
     registry.register_view("connect4", connect4_view)
+    registry.register_view("abalone", abalone_view)
+    registry.register_view("hive", hive_view)
     _HOVER_SIMS["quoridor"] = _hover_quoridor
     _HOVER_SIMS["connect4"] = _hover_connect4
+    _HOVER_SIMS["abalone"] = _hover_abalone
+    _HOVER_SIMS["hive"] = _hover_hive
 
 
 def build_registry() -> GameRegistry:
@@ -95,7 +101,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--hover",
-        choices=("none", "wall-h", "wall-v", "corner", "cell", "drop", "drop-mid"),
+        choices=("none", "wall-h", "wall-v", "corner", "cell", "drop", "drop-mid",
+                 "aba-select", "hive-place", "hive-select"),
         default="none",
         help="截图时模拟鼠标悬停，用来拍下预览 / 高亮（按棋类分派）",
     )
@@ -154,12 +161,20 @@ def main(argv: list[str] | None = None) -> int:
                 session.play(move)
             window.view.set_last_move(session.history[-1].move)
 
+        # 先跑两帧让布局与摄像机就位 —— 悬停模拟要把**格坐标换算成屏幕坐标**，
+        # 而昆虫棋的换算是靠摄像机的（自适应缩放只在 update 里发生）。
+        for _ in range(2):
+            window._handle_events()
+            window._update(16.0)
+            window._draw()
+            pygame.display.flip()
+
         if args.hover != "none" and args.scene == "match":
             sim = _HOVER_SIMS.get(window.game_key)
             if sim is not None:
                 sim(window, args.hover)
 
-        for _ in range(12):
+        for _ in range(10):
             window._handle_events()
             window._update(16.0)
             window._draw()
@@ -221,6 +236,55 @@ def _hover_connect4(window, mode: str) -> None:
         col = open_cols[min(len(open_cols) - 1, len(open_cols) // 2 + 1)]
     pos = view.cell_center(col, state.heights[col])
     window.view_state.mouse = pos
+    view.handle_motion(pos, session.game, state, window.view_state)
+
+
+def _hover_hive(window, mode: str) -> None:
+    """昆虫棋：拍下"选手牌 → 亮出落点"或"选棋子 → 亮出落点"的画面。"""
+    session = window.session
+    view = window.view
+    state = session.state
+    if mode == "hive-place":
+        # 手牌条的位置是 draw() 里才排的，截图时可能还没画过一帧 —— 先排一次
+        view._layout_cards(state, state.current)
+        # 挑一张**还有货**的卡：第一张常常是"蜂后 0"（早落场了），点了没有落点
+        kind = next(
+            (k for k in view._cards if state.hand_left(state.current, k) > 0), None
+        )
+        if kind is None:
+            return
+        pos = view._cards[kind].center
+        view.handle_click(pos, session.game, state, window.view_state)
+        view.handle_motion(pos, session.game, state, window.view_state)
+        return
+    moves = session.game.legal_moves(state)
+    if not moves:
+        return
+    # 优先选一枚己方已入场的棋（没有就只能放置）
+    best = next(
+        (m for m in moves if getattr(m, "src", None) is not None and m.src != getattr(m, "dest", None)),
+        None,
+    )
+    if best is None:
+        return
+    pos = view.cell_center(best.src)
+    view.handle_click(pos, session.game, state, window.view_state)
+    view.handle_motion(pos, session.game, state, window.view_state)
+
+
+def _hover_abalone(window, mode: str) -> None:
+    """大力士棋：选中一枚己方棋子，把"选中 + 目标格箭头"拍下来。"""
+    session = window.session
+    view = window.view
+    state = session.state
+    moves = session.game.legal_moves(state)
+    if not moves:
+        return
+    # 优先挑一手带推挤的，画面信息量最大
+    best = next((m for m in moves if m.ejected is not None or m.pushed), moves[0])
+    pos = view.cell_center(best.cells[0])
+    window.view_state.mouse = pos
+    view.handle_click(pos, session.game, state, window.view_state)
     view.handle_motion(pos, session.game, state, window.view_state)
 
 

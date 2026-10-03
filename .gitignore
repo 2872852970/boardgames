@@ -19,6 +19,7 @@ config/settings.*.tmp
 
 # 生成的截图等临时产物（.workbuddy/memory 里的项目记忆要保留）
 .workbuddy/artifacts/
+.workbuddy/tmp/
 
 # IDE / OS
 .idea/

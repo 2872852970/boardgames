@@ -296,6 +296,10 @@ class LobbyScene:
             self._icon_drop(surface, rect)
         elif kind == "board":
             self._icon_board(surface, rect)
+        elif kind == "hex":
+            self._icon_hex(surface, rect)
+        elif kind == "hive":
+            self._icon_hive(surface, rect)
         else:
             self._icon_dots(surface, rect)
 
@@ -341,6 +345,48 @@ class LobbyScene:
         pygame.draw.circle(surface, theme.PLAYER_DARK[1], (fall_x, fall_y), radius)
         pygame.draw.circle(surface, theme.PLAYER_COLORS[1], (fall_x, fall_y), radius - 2)
 
+    def _icon_hex(self, surface, rect: pygame.Rect) -> None:
+        """大力士棋：19 个圆点摆成六边形棋盘（半径 2 的小盘），中间三枚高亮。"""
+        cx, cy = rect.centerx, rect.centery
+        gap = 15
+        radius = 5
+        # 只画到离心度 2 —— 再往外卡片上就挤不下了，但"六边形点阵"的特征已经足够
+        for ring in (2, 1, 0):
+            for q in range(-ring, ring + 1):
+                for r in range(-ring, ring + 1):
+                    if max(abs(q), abs(r), abs(q + r)) != ring:
+                        continue
+                    pos = (cx + int(gap * (q + r / 2)), cy + int(gap * 0.87 * r))
+                    pygame.draw.circle(surface, theme.CELL_ALT, pos, radius)
+        # 中间一行三格：两枚己方子在推一枚对方子（就是"以多推少"）
+        for q, player in ((-1, 0), (0, 0), (1, 1)):
+            pos = (cx + int(gap * q), cy)
+            pygame.draw.circle(surface, theme.PLAYER_DARK[player], pos, radius)
+            pygame.draw.circle(surface, theme.PLAYER_COLORS[player], pos, radius - 2)
+
+    def _icon_hive(self, surface, rect: pygame.Rect) -> None:
+        """昆虫棋：一小簇六边形（中央是蜂后），边上留白表达"棋盘没有边界"。
+
+        只画 7 格就够认了 —— 蜂巢是从已有棋子长出来的，画满反而像固定棋盘。
+        """
+        cx, cy = rect.centerx, rect.centery
+        size = 15.0
+        # 与 games/hive/geometry.py 同一套 pointy-top 换算；这里不 import 规则包，
+        # 免得大厅反过来依赖某个具体棋类
+        span_x, span_y = size * 1.732, size * 1.5
+        directions = ((1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1))
+        fills = {(0, 0): theme.ACCENT_DIM, (1, 0): theme.PLAYER_COLORS[0],
+                 (-1, 0): theme.PLAYER_COLORS[1], (0, 1): theme.PLAYER_COLORS[0],
+                 (0, -1): theme.PLAYER_COLORS[1]}
+        cells = [(0, 0), *directions]
+        for q, r in cells:
+            centre = (cx + span_x * (q + r / 2.0), cy + span_y * r)
+            pygame.draw.polygon(surface, fills.get((q, r), theme.CELL_ALT),
+                                _hex_points(centre, size - 1.0))
+            pygame.draw.polygon(surface, theme.BORDER_SOFT, _hex_points(centre, size - 1.0), 1)
+        # 中央那枚是蜂后：描一圈亮边，别和"普通格子"混在一起
+        pygame.draw.polygon(surface, theme.ACCENT, _hex_points((cx, cy), size - 1.0), 2)
+
     def _icon_dots(self, surface, rect: pygame.Rect) -> None:
         """兜底：3×3 圆角方块，对角线提亮。"""
         size = 14
@@ -355,6 +401,20 @@ class LobbyScene:
     @staticmethod
     def _draw_bullet(surface, center, color) -> None:
         pygame.draw.circle(surface, color, center, 3)
+
+
+def _hex_points(center: tuple[float, float], size: float) -> list[tuple[float, float]]:
+    """pointy-top 六边形的六个顶点（尖朝上）。"""
+    cx, cy = center
+    half = 0.8660254 * size
+    return [
+        (cx, cy - size),
+        (cx + half, cy - size / 2),
+        (cx + half, cy + size / 2),
+        (cx, cy + size),
+        (cx - half, cy + size / 2),
+        (cx - half, cy - size / 2),
+    ]
 
 
 def _wrap(font, text: str, max_width: int) -> list[str]:

@@ -6,8 +6,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+# 起始布局直接从规则包取，避免"侧栏多一个选项 / 规则少一种摆法"的错位。
+# games 包只依赖 core，不会反向 import settings，所以这里没有成环。
+from boardgames.games import abalone as _abalone
 
 ParamKind = Literal["int", "float", "bool", "choice", "text"]
 
@@ -23,6 +28,10 @@ GROUPS: tuple[tuple[str, str], ...] = (
 
 #: 玩家类型（人 / AI / 随机）
 PLAYER_TYPES: tuple[str, ...] = ("human", "minimax", "mcts", "random")
+#: 只算 AI 的那几种。**侧栏的"电脑 AI"下拉只能用这几个** ——
+#: 放"人类"进去是没有意义的选项：人机对战里它会被 :meth:`GameSession.
+#: resolved_player_types` 直接改掉，自对弈里同理。
+AI_TYPES: tuple[str, ...] = tuple(kind for kind in PLAYER_TYPES if kind != "human")
 PLAYER_TYPE_LABELS: dict[str, str] = {
     "human": "人类",
     "minimax": "AI · Minimax",
@@ -36,6 +45,10 @@ MODE_LABELS: dict[str, str] = {
     "pve": "人机对战",
     "eve": "AI 自对弈",
 }
+
+#: 大力士棋的起始布局（透传规则包的那份，避免两处各写一份而错位）
+ABALONE_SETUPS: tuple[str, ...] = _abalone.ABALONE_SETUPS
+ABALONE_SETUP_LABELS: dict[str, str] = dict(_abalone.SETUP_LABELS)
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,11 @@ class ParamSpec:
     #: 必须标对 —— 否则"棋盘尺寸""每人墙数"这类只对某个棋类有意义的参数，
     #: 会在别的棋类的侧栏里也露出来。
     games: tuple[str, ...] = ()
+    #: ``choice`` 类型时"取值 -> 中文标签"的映射；空则用取值原文当标签。
+    #:
+    #: 玩家类型那两项历史上是侧栏里写死的（``spec.key in {"p1_type","p2_type"}``），
+    #: 这个字段把同样的能力开放给所有 choice 参数。
+    choice_labels: Mapping[str, str] = field(default_factory=dict)
 
     # ---- 校验 / 归一化 ----
 
@@ -100,6 +118,8 @@ def _specs() -> list[ParamSpec]:
     # 常用缩写，避免下面每行都写 games=("quoridor",)
     Q = ("quoridor",)
     C4 = ("connect4",)
+    A = ("abalone",)
+    H = ("hive",)
     out: list[ParamSpec] = [
         # ---------------- 棋局 ----------------
         ParamSpec("board_size", "棋盘尺寸", "int", 9, 5, 13, 2, group="game",
@@ -110,20 +130,29 @@ def _specs() -> list[ParamSpec]:
                   games=C4, hint="标准为 7 列"),
         ParamSpec("connect4_rows", "行数", "int", 6, 4, 10, 1, group="game",
                   games=C4, hint="标准为 6 行"),
+        ParamSpec("abalone_setup", "起始布局", "choice", "standard", group="game",
+                  choices=ABALONE_SETUPS, choice_labels=ABALONE_SETUP_LABELS, games=A,
+                  hint="标准 / 比利时雏菊（攻） / 德国雏菊（守）；切换即开新局"),
+        ParamSpec("hive_expansion", "启用扩展虫", "bool", False, group="game",
+                  games=H, hint="加瓢虫 / 蚊子 / 鼠妇各一枚；切换即开新局"),
         ParamSpec("mode", "对局模式", "choice", "pve", choices=MODES, group="game"),
         ParamSpec("first_player", "先手", "choice", "p1", choices=("p1", "p2", "random"),
                   group="game", hint="数字版里的「石头剪刀布」"),
         # ---------------- 双方 ----------------
-        ParamSpec("p1_type", "玩家 1", "choice", "human", choices=PLAYER_TYPES,
-                  group="players"),
-        ParamSpec("p2_type", "玩家 2", "choice", "minimax", choices=PLAYER_TYPES,
-                  group="players"),
+        # 这两项只在「AI 自对弈」里露出来（人机对战走侧栏的"我执 / 电脑 AI"，
+        # 见 ui/sidebar.py 的 PVE_SIDE_KEY / PVE_AI_KEY），所以默认值和候选里
+        # 都不该出现"人类" —— 自对弈两边都得是 AI。
+        ParamSpec("p1_type", "玩家 1 的 AI", "choice", "minimax", choices=AI_TYPES,
+                  group="players", expose=True),
+        ParamSpec("p2_type", "玩家 2 的 AI", "choice", "mcts", choices=AI_TYPES,
+                  group="players", expose=True),
         # ---------------- Minimax ----------------
         ParamSpec("minimax_depth", "搜索深度", "int", 4, 1, 10, 1, group="minimax"),
         ParamSpec("minimax_wall_depth", "考虑放墙的层数", "int", 2, 1, 5, 1, group="minimax",
                   games=Q, hint="越大越强也越慢"),
-        ParamSpec("minimax_max_branch", "墙候选上限", "int", 12, 0, 40, 1, group="minimax",
-                  games=Q, hint="0 表示不裁剪（很慢）"),
+        ParamSpec("minimax_max_branch", "着法候选上限", "int", 12, 0, 40, 1, group="minimax",
+                  games=Q + A + H,
+                  hint="0 表示不裁剪（很慢）；大力士棋建议 20~32，昆虫棋分支很宽建议 16~32"),
         ParamSpec("minimax_time_ms", "思考时限 (ms)", "int", 1200, 50, 15000, 50, group="minimax"),
         ParamSpec("minimax_tt", "启用置换表", "bool", True, group="minimax", advanced=True),
         # ---------------- MCTS ----------------
@@ -131,7 +160,8 @@ def _specs() -> list[ParamSpec]:
         ParamSpec("mcts_c_uct", "探索常数 C", "float", 1.414, 0.1, 4.0, 0.05, group="mcts"),
         ParamSpec("mcts_rollout_cap", "Rollout 深度上限", "int", 40, 4, 200, 4, group="mcts",
                   advanced=True),
-        ParamSpec("mcts_max_branch", "墙候选上限", "int", 8, 0, 40, 1, group="mcts", games=Q),
+        ParamSpec("mcts_max_branch", "着法候选上限", "int", 8, 0, 40, 1, group="mcts",
+                  games=Q + A + H, hint="大力士棋建议 20~32，昆虫棋建议 16~32"),
         ParamSpec("mcts_time_ms", "思考时限 (ms)", "int", 1200, 50, 15000, 50, group="mcts"),
         ParamSpec("ai_seed", "随机种子", "int", 0, 0, 10**9, 1, group="mcts", expose=False,
                   hint="0 表示每次随机；固定种子可复现对局"),
@@ -159,10 +189,41 @@ def _specs() -> list[ParamSpec]:
         ParamSpec("w_threat", "即时威胁", "float", 60.0, 0.0, 400.0, 5.0, group="eval",
                   advanced=True, games=C4,
                   hint="下一手就能连成四子的列数（攻防同权，保证评估对称）"),
+        # 大力士棋专属权重。**必须带 abalone 前缀** —— ``w_center`` 已经被四子棋占用了，
+        # 重名会让"调大力士棋的中心性"连带改掉四子棋的评估。
+        ParamSpec("w_abalone_out", "推出子数差", "float", 220.0, 0.0, 600.0, 10.0, group="eval",
+                  advanced=True, games=A, hint="每多挤出一枚的领先，主导项"),
+        ParamSpec("w_abalone_center", "中心性", "float", 6.0, 0.0, 50.0, 0.5, group="eval",
+                  advanced=True, games=A, hint="越靠中心越难被推出去"),
+        ParamSpec("w_abalone_cohere", "凝聚度", "float", 2.5, 0.0, 50.0, 0.5, group="eval",
+                  advanced=True, games=A, hint="相邻同色对数；阵型越紧密越难被以多推少"),
+        ParamSpec("w_abalone_danger", "边缘危险", "float", 3.0, 0.0, 50.0, 0.5, group="eval",
+                  advanced=True, games=A, hint="己方子离盘边的平方距离，越大越倾向往中心收"),
+        # 昆虫棋专属权重。同样**必须带 hive_ 前缀**（``w_center`` / ``w_mobility``
+        # 都已被别的棋类占用）。
+        ParamSpec("w_hive_surround", "围后进度", "float", 40.0, 0.0, 400.0, 5.0, group="eval",
+                  advanced=True, games=H, hint="敌后 − 己后 的邻格被占数之差，主导项"),
+        ParamSpec("w_hive_buried", "蜂后被压", "float", 40.0, 0.0, 400.0, 5.0, group="eval",
+                  advanced=True, games=H, hint="被甲虫压住的蜂后近乎必败"),
+        ParamSpec("w_hive_queen", "蜂后落盘", "float", 20.0, 0.0, 200.0, 5.0, group="eval",
+                  advanced=True, games=H, hint="蜂后没落盘就不能动任何棋子"),
+        ParamSpec("w_hive_mobility", "可动子数", "float", 5.0, 0.0, 100.0, 1.0, group="eval",
+                  advanced=True, games=H, hint="自己是栈顶的棋子数差"),
+        ParamSpec("w_hive_hand", "手牌余量", "float", 4.0, 0.0, 100.0, 1.0, group="eval",
+                  advanced=True, games=H, hint="没落场的虫越多越灵活"),
+        ParamSpec("w_hive_contact", "贴敌后数", "float", 2.0, 0.0, 100.0, 1.0, group="eval",
+                  advanced=True, games=H, hint="己方棋贴住敌后的数量差"),
+        ParamSpec("p_hive_place", "Rollout 放置概率", "float", 0.55, 0.0, 1.0, 0.01,
+                  group="eval", advanced=True, needs_engine="mcts", games=H,
+                  hint="rollout 里优先放新虫的概率；太低会一直搬家不围后"),
         # ---------------- 界面 ----------------
         ParamSpec("anim_ms", "动画时长 (ms)", "int", 140, 0, 600, 10, group="ui"),
         ParamSpec("c4_anim_ms", "落子动画 (ms)", "int", 850, 0, 2000, 50, group="ui",
                   games=C4, hint="重力下落 + 回弹的总时长"),
+        ParamSpec("abalone_anim_ms", "走子动画 (ms)", "int", 260, 0, 1200, 10, group="ui",
+                  games=A, hint="整组推进 / 推挤的滑行时长"),
+        ParamSpec("hive_anim_ms", "走子动画 (ms)", "int", 260, 0, 1200, 10, group="ui",
+                  games=H, hint="沿路径滑行 / 落子的时长"),
         ParamSpec("show_hints", "显示合法落点提示", "bool", True, group="ui"),
         ParamSpec("show_wall_slots", "显示墙槽位", "bool", True, group="ui", games=Q),
         ParamSpec("ai_delay_ms", "AI 落子停顿 (ms)", "int", 120, 0, 3000, 20, group="ui",
@@ -207,6 +268,17 @@ WEIGHT_KEYS: tuple[str, ...] = (
     "w_center",
     "w_line",
     "w_threat",
+    "w_abalone_out",
+    "w_abalone_center",
+    "w_abalone_cohere",
+    "w_abalone_danger",
+    "w_hive_surround",
+    "w_hive_buried",
+    "w_hive_queen",
+    "w_hive_mobility",
+    "w_hive_hand",
+    "w_hive_contact",
+    "p_hive_place",
 )
 
 

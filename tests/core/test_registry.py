@@ -18,6 +18,27 @@ def test_default_registry_has_quoridor():
     assert game.player_count() == 2
 
 
+def test_default_registry_has_hive():
+    """昆虫棋走注册表接入 —— 大厅与 ``--game hive`` 都靠它。"""
+    registry = build_default_registry()
+    assert "hive" in registry
+    game = registry.get("hive")
+    assert game.key == "hive"
+    assert game.display_name == "昆虫棋"
+    assert game.player_count() == 2
+    # 每个游戏都要有能直接展示给玩家的三段文案与图标名
+    assert game.tagline and game.summary and game.rules
+    assert game.icon == "hive"
+
+
+def test_every_registered_game_declares_its_settings_map():
+    """侧栏参数靠 ``settings_map`` 反查 —— 缺键的开关改了完全不生效。"""
+    for game in build_default_registry().all_games():
+        assert isinstance(game.settings_map, dict), game.key
+        for setting_key, attr in game.settings_map.items():
+            assert hasattr(game, attr), f"{game.key}: {setting_key} -> {attr}"
+
+
 def test_register_and_lookup():
     registry = GameRegistry()
     game = QuoridorGame()
