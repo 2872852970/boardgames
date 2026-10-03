@@ -13,7 +13,26 @@
 > 都是 3.10 才有，而这三样在搜索热路径上天天用；pygame-ce 2.5.7+ 也要求 3.10。
 > 唯一用不了的是 PEP 695 泛型（要 3.12），所以代码里统一写 `TypeVar` + `Generic`。
 
-**Windows 上最简单的跑法：双击仓库根目录的 `boardgames.bat`**（内容就是 `uv run boardgames`）。
+**Windows 上最简单的跑法：双击仓库根目录的 `boardgames.bat`。** 它做的事是
+`cd /d %~dp0` → 检查 `uv` → 设好两个环境变量 → `uv run python -m boardgames.app %*`，
+失败时会停住让你看清错误。
+
+> #### 为什么 bat 里非要设 `PYTHONUTF8=1`
+> 项目路径**含中文**时（比如 `C:\Users\Admin\WorkBuddy\棋类游戏`），双击启动会直接报
+> `ModuleNotFoundError: No module named 'boardgames'`。
+>
+> 链条是这样的：uv 把本项目以 editable 方式装进 `.venv`，往
+> `.venv\Lib\site-packages\_editable_impl_boardgames.pth` 里写下一行 **UTF-8 编码**的
+> `C:\...\棋类游戏\src`；而 Python 的 `site.py` 在 Windows 上读 `.pth` 用的是
+> **系统 ANSI 编码（GBK/936）**，解出一个乱码路径 → 该目录不存在 → 被 `site` 静默忽略
+> → `src` 不在 `sys.path`。
+>
+> 开 UTF-8 模式（PEP 540）后 `.pth` 按 UTF-8 读，问题解决；`PYTHONPATH` 再兜一层底。
+> 命令行下碰到就自己补一句 `set PYTHONUTF8=1`（PowerShell 里是 `$env:PYTHONUTF8=1`）。
+>
+> 顺带两个批处理自身的坑：`boardgames.bat` 存成 **UTF-8 但正文保持纯 ASCII**
+> （cmd 用系统代码页解 `.bat`，非 ASCII 字节会变乱码，所以没写 `chcp 65001`——
+> 它在某些终端环境里还会挂起），并且 `.gitattributes` 里钉了 `*.bat text eol=crlf`。
 
 命令行等价写法：
 

@@ -6,3 +6,6 @@
 *.jpg binary
 *.ttf binary
 *.ttc binary
+
+# 批处理必须是 CRLF，纯 LF 在部分 Windows 上解析异常
+*.bat text eol=crlf

@@ -20,6 +20,12 @@ uv sync && uv run boardgames
 
 启动后先进游戏选择大厅，点卡片进入对局；对局中按 `H` 随时查看完整规则。
 
+> **双击 bat 报 `No module named 'boardgames'`？** 项目放在**含中文的路径**下会触发：
+> editable 安装往 venv 里写的 `.pth` 记着 UTF-8 的 `src` 路径，而 `site.py` 在 Windows 上
+> 默认按系统 ANSI 编码（GBK）读 `.pth`，解出乱码 → 路径不存在 → 被忽略。
+> `boardgames.bat` 里已经用 `PYTHONUTF8=1` + `PYTHONPATH` 修掉了；
+> 命令行下遇到就自己补一句 `set PYTHONUTF8=1`。
+
 ## 四个游戏
 
 | 游戏 | 玩法特点 |

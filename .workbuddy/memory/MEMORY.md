@@ -34,6 +34,20 @@ uv run boardgames --hover wall-h --scene match   # 模拟悬停（大力士棋 -
 uv run boardgames --window 1000x640     # 强制窗口尺寸调试布局
 ```
 
+**⚠️ 双击 `boardgames.bat` 报 `No module named 'boardgames'` = 中文路径踩坑**（不是代码 bug）：
+项目在 `C:\Users\Admin\WorkBuddy\棋类游戏` 这种**含中文**的路径下，uv 的 editable 安装
+往 `.venv\Lib\site-packages\_editable_impl_boardgames.pth` 写的是 **UTF-8** 的 `...\src`，
+而 Python 的 `site.py` 在 Windows 上按**系统 ANSI 编码（GBK/936）**读 `.pth` → 解出乱码路径
+→ 目录不存在 → 被静默忽略 → `src` 不在 `sys.path`。
+**解法：设 `PYTHONUTF8=1`**（PEP 540，`.pth` 改按 UTF-8 读）。git bash 下 locale 不同所以
+能跑，cmd.exe（双击）必挂 —— 这正是"bash 里好好的、双击就起不来"的原因。
+`boardgames.bat` 里已写好 `PYTHONUTF8=1` + `PYTHONPATH` 双保险，别删这两行。
+
+**`boardgames.bat` 的编码约定**（用户明确要求）：存成 **UTF-8，但正文保持纯 ASCII**，
+**不要写 `chcp 65001`**（实测在禁用 ConPTY 的终端里会挂起 5 分钟以上；且 cmd 用系统
+代码页解 `.bat`，非 ASCII 字节一律变乱码）。中文说明放 README / `docs/USAGE.md`。
+`.gitattributes` 里钉了 `*.bat text eol=crlf`。
+
 **昆虫棋截图必须加 `--mode pvp`**：落点提示挂在 `interactive` 上，`config/settings.json`
 里若存了 `mode=eve`，默认命令会拍到"一个落点都没有"的画面。
 
