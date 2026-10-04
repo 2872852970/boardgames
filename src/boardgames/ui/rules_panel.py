@@ -61,10 +61,16 @@ def rules_sections(game) -> list[tuple[str, tuple[str, ...]]]:
 
 
 class RulesOverlay:
-    """一块居中的规则说明卡片（带遮罩、滚动与关闭按钮）。"""
+    """一块规则说明卡片（带滚动与关闭按钮）。
 
-    def __init__(self, on_close=None) -> None:
+    ``docked`` 为 ``False`` 时是**居中浮层**（带遮罩，盖住整个棋盘 —— 大厅用这个）；
+    为 ``True`` 时是**右侧停靠面板**（只占侧栏那一列，棋盘完整可见，对局场景用这个，
+    满足「规则说明移到右边面板、给棋盘让位」）。
+    """
+
+    def __init__(self, on_close=None, *, docked: bool = False) -> None:
         self.on_close = on_close
+        self.docked = docked
         self.game = None
         self._open = False
         #: 折行要量文字宽度，而 ``show()`` 拿不到窗口的 FontBook ——
@@ -117,7 +123,16 @@ class RulesOverlay:
         self._relayout()
 
     def _card_rect(self) -> pygame.Rect:
-        """卡片尺寸：跟着窗口走，但不小于能读的下限。"""
+        """卡片尺寸：跟着窗口走，但不小于能读的下限。
+
+        停靠模式（``docked``）下卡片贴在右侧、占满侧栏那一列、整高，棋盘不被遮。
+        """
+        if self.docked:
+            width = min(theme.SIDEBAR_W, max(300, self.area.width - 40))
+            rect = pygame.Rect(0, 0, width, self.area.height)
+            rect.right = self.area.right
+            rect.y = self.area.y
+            return rect
         width = int(min(560, max(320, self.area.width - 96)))
         height = int(min(self.area.height - 64, max(300, self.area.height * 0.82)))
         rect = pygame.Rect(0, 0, width, height)
@@ -166,7 +181,11 @@ class RulesOverlay:
     # ------------------------------------------------------------------ #
 
     def handle_event(self, event: pygame.event.Event) -> bool:
-        """打开时**吃掉所有事件**；没打开时一律返回 False（交给场景）。"""
+        """打开时**吃掉所有事件**；没打开时一律返回 False（交给场景）。
+
+        停靠模式（``docked``）下点面板外不关闭 —— 棋盘仍可见，规则只是侧边一栏；
+        居中模式点遮罩关闭（经典弹窗行为）。
+        """
         if not self._open:
             return False
         if self._close.handle_event(event):
@@ -181,7 +200,9 @@ class RulesOverlay:
                 return True
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if not self._card.collidepoint(event.pos):
-                    self.close()  # 点遮罩关闭
+                    if not self.docked:
+                        self.close()  # 居中模式：点遮罩关闭
+                    return True     # 停靠模式：吃掉但不关闭
                 return True
             return True
         if event.type == pygame.KEYDOWN:
@@ -206,13 +227,25 @@ class RulesOverlay:
     def draw(self, surface: pygame.Surface, fonts: FontBook) -> None:
         if not self._open or self.game is None:
             return
-        veil = pygame.Surface(self.area.size, pygame.SRCALPHA)
-        veil.fill((*theme.BG, 205))
-        surface.blit(veil, self.area.topleft)
+        if self.docked:
+            # 停靠模式：只在右侧画面板，不盖住棋盘（靠左侧一道阴影 / 描边分隔）
+            render.panel(
+                surface, self._card, color=theme.PANEL, radius=0,
+                border=theme.BORDER_SOFT, shadow=False,
+            )
+            # 左侧一道更深的阴影，强调「这是浮在棋盘上的面板」
+            shadow = pygame.Surface((10, self._card.height), pygame.SRCALPHA)
+            for i in range(10):
+                shadow.fill((*theme.SHADOW, 26 - i * 2), (i, 0, 1, self._card.height))
+            surface.blit(shadow, (self._card.x - 10, self._card.y))
+        else:
+            veil = pygame.Surface(self.area.size, pygame.SRCALPHA)
+            veil.fill((*theme.BG, 205))
+            surface.blit(veil, self.area.topleft)
 
-        render.soft_shadow(surface, self._card, theme.RADIUS + 4, spread=5)
-        render.rounded_rect(surface, self._card, theme.PANEL, theme.RADIUS + 4)
-        render.rounded_rect(surface, self._card, theme.BORDER, theme.RADIUS + 4, width=1)
+            render.soft_shadow(surface, self._card, theme.RADIUS + 4, spread=5)
+            render.rounded_rect(surface, self._card, theme.PANEL, theme.RADIUS + 4)
+            render.rounded_rect(surface, self._card, theme.BORDER, theme.RADIUS + 4, width=1)
 
         # ---- 标题 ----
         title_x = self._card.x + PAD

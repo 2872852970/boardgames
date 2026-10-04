@@ -54,12 +54,19 @@ class _MinimaxRun:
         alpha = -INF
         best_score = -INF
         best_move: Move | None = None
+        player = state.current_player
         for move in self.game.legal_moves(state, self.options(0)):
             child = self.game.apply(state, move)
-            value = self.negamax(child, depth - 1, -INF, -alpha, 1)
+            if child.current_player == player:
+                # 额外回合：同一玩家继续，视角不变，用 (alpha, INF) 窗口且不取反
+                value = self.negamax(child, depth - 1, alpha, INF, 1)
+            else:
+                value = self.negamax(child, depth - 1, -INF, -alpha, 1)
+                if value is not None:
+                    value = -value
             if value is None:
                 return None
-            score = -value
+            score = value
             if score > best_score:
                 best_score, best_move = score, move
             if score > alpha:
@@ -112,10 +119,17 @@ class _MinimaxRun:
         a = alpha
         for move in moves:
             child = self.game.apply(state, move)
-            value = self.negamax(child, depth - 1, -beta, -a, ply + 1)
+            if child.current_player == player:
+                # 额外回合（点格棋封口、播棋落己方仓库）：同一玩家继续走，
+                # 视角不变，**不能**取反。alpha/beta 也不换边。
+                value = self.negamax(child, depth - 1, a, beta, ply + 1)
+            else:
+                value = self.negamax(child, depth - 1, -beta, -a, ply + 1)
+                if value is not None:
+                    value = -value
             if value is None:
                 return None
-            score = -value
+            score = value
             if score > best:
                 best, best_move = score, move
             if score > a:

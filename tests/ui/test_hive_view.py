@@ -927,3 +927,54 @@ def test_pick_kind_rejects_an_exhausted_or_unknown_kind(view, game):
     assert view.pick_kind("dragonfly", game, state, ViewState()) is None  # 没这种虫
     assert view.pick_kind("ladybug", game, state, ViewState()) is None  # 扩展没开
     assert not view.has_selection()
+
+
+# --------------------------------------------------------------------------- #
+# 人机对战：手牌条钉在"我方"，不摊开对手的信息
+# --------------------------------------------------------------------------- #
+
+def test_hand_player_follows_pov_in_pve_and_current_otherwise(view):
+    """``pov_player`` 是"我"哪一方：双人 / 自对弈为 None（跟随当前行动方）。"""
+    assert view._hand_player(ViewState()) == 0
+    assert view._hand_player(ViewState(pov_player=1)) == 1
+    # 轮到谁都不影响"钉住"的视角方
+    view._sync_state(make_state(current=1))
+    assert view._hand_player(ViewState(pov_player=0)) == 0
+    assert view._hand_player(ViewState()) == 1
+
+
+def test_ai_turn_in_pve_drops_my_selection_and_hints(view, game, fonts):
+    """AI 回合：人类上一手留下的选择与落点提示必须清干净。"""
+    human_view = ViewState(pov_player=0)
+    state = make_state()
+    kind = view.active_hand_kinds(state)[0]
+    view.pick_kind(kind, game, state, human_view)
+    assert view._moves, "人类回合选中手牌后该有落点"
+
+    ai_turn = make_state(current=1)
+    surface = pygame.Surface((900, 700))
+    view.draw(surface, fonts, game, ai_turn, human_view, interactive=False)
+
+    assert view._picked is None and view._selected is None
+    assert not view._moves, "AI 回合不该留着任何落点提示"
+
+
+def test_ai_turn_in_pve_rejects_board_clicks(view, game, fonts):
+    """AI 回合连点击都不该被视图接受（不依赖场景那层守卫）。"""
+    ai_turn = make_state(current=1)
+    human_view = ViewState(pov_player=0)
+    surface = pygame.Surface((900, 700))
+    view.draw(surface, fonts, game, ai_turn, human_view, interactive=False)
+    kind = view.active_hand_kinds(ai_turn)[0]
+    assert kind in view._cards, "手牌卡该已经排好（AI 的手牌也照常画，只是不可点）"
+
+    assert view.handle_click(view._cards[kind].center, game, ai_turn, human_view) is None
+    assert not view.has_selection()
+    assert not view._moves
+
+
+def test_pvp_hand_strip_still_follows_the_current_player(view):
+    """双人同屏不受影响：没有 pov 时手牌条照旧跟着当前行动方。"""
+    assert view._hand_player(ViewState()) == 0
+    view._sync_state(make_state(current=1))
+    assert view._hand_player(ViewState()) == 1

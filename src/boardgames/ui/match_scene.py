@@ -47,10 +47,11 @@ if TYPE_CHECKING:  # 避免运行时循环 import
     from boardgames.ui.window import GameWindow
 
 #: 改变这些参数需要重开一局（它们决定棋局的初始构造）
-RESTART_KEYS = {"board_size", "walls_per_player", "first_player",
-                "connect4_cols", "connect4_rows", "abalone_setup", "hive_expansion"}
+RESTART_KEYS = {"board_size", "walls_per_player",
+                "connect4_cols", "connect4_rows", "abalone_setup", "hive_expansion",
+                "dotsboxes_size", "mancala_pits", "mancala_seeds"}
 #: 这些参数一改就作废正在进行的搜索（换了引擎 / 不再是 AI 的回合）
-MODE_KEYS = {"mode", "p1_type", "p2_type", "first_player"}
+MODE_KEYS = {"mode", "p1_type", "p2_type"}
 #: 这些参数一改就让正在思考的 AI 重新思考。
 #: ``"p_"`` 同时覆盖墙棋的 ``p_wall`` 与昆虫棋的 ``p_hive_place``（都是 rollout 偏好）
 AI_KEYS_PREFIX = ("minimax_", "mcts_", "w_", "p_", "ai_seed")
@@ -200,7 +201,7 @@ class MatchScene:
         self._result_close = Button("×", self._dismiss_result)
         # 规则说明：大厅能开，对局里也得能开 —— 下到一半忘了规则是最常见的场景。
         # 同一个浮层组件，谁都能持有一个实例。
-        self.rules = RulesOverlay()
+        self.rules = RulesOverlay(docked=True)
         # 设置浮层：评估权重 / 界面与操作这些不常用参数都收在里面
         self.settings_panel = SettingsPanel(window.settings, self._on_setting)
         self._confirm = _Confirm()
@@ -274,6 +275,9 @@ class MatchScene:
         self.view_state.interactive_player = (
             session.state.current_player if session.is_human_turn() else None
         )
+        # 人机对战："我"是哪一方（双人 / 自对弈为 None = 跟随当前行动方）。
+        # 昆虫棋靠它把手牌条钉在自己这边，不再随回合切到 AI 那边。
+        self.view_state.pov_player = self._pov_player()
 
         # AI 调度（暂停 / 单步由 session 自己判断）
         #
@@ -339,6 +343,20 @@ class MatchScene:
     def _apply_view_flags(self) -> None:
         self.view_state.extra["show_hints"] = bool(self.settings.get("show_hints"))
         self.view_state.extra["show_wall_slots"] = bool(self.settings.get("show_wall_slots"))
+
+    def _pov_player(self) -> int | None:
+        """"我"是哪一方 —— 只在人机对战里有意义。
+
+        人机对战里恰好有一方是人类，返回它的玩家索引；双人（同屏轮流）与
+        AI 自对弈返回 ``None``（= 跟随当前行动方，谁走棋显示谁的）。
+        视图可以用它把手牌 / 提示钉在自己这一边（昆虫棋就是这么做的）。
+        """
+        if self.session.mode != "pve":
+            return None
+        for index, kind in enumerate(self.session.resolved_player_types()):
+            if kind == "human":
+                return index
+        return None
 
     def _auto_fit_camera(self) -> None:
         """``camera.auto_fit`` 开着时把内容塞进视口 —— **但只在必要时**。
@@ -423,6 +441,8 @@ class MatchScene:
             return int(self.settings.get("abalone_anim_ms"))
         if self.game_key == "hive":
             return int(self.settings.get("hive_anim_ms"))
+        if self.game_key == "mancala":
+            return int(self.settings.get("mancala_anim_ms"))
         return int(self.settings.get("anim_ms"))
 
     def _place_mode_on(self) -> bool:
@@ -688,6 +708,10 @@ class MatchScene:
                 self.view.handle_motion(
                     event.pos, self.session.game, self.session.state, self.view_state
                 )
+            elif hasattr(self.view, "clear_hover"):
+                # 鼠标离开棋盘：把悬停预览收掉，别把一条幽灵线留在画面上
+                # （``clear_hover`` 是可选钩子，没有它的棋类什么都不做）
+                self.view.clear_hover()
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
@@ -800,17 +824,32 @@ class MatchScene:
             return tuple(
                 f"围 {state.queen_surround(p)}/6 · 手牌 {state.hand_total(p)}" for p in (0, 1)
             )
+        if self.game_key == "dotsboxes":
+            return tuple(f"占 {state.scores[p]} 格" for p in (0, 1))
+        if self.game_key == "mancala":
+            return tuple(f"仓库 {state.stores[p]} 粒" for p in (0, 1))
         return (f"墙 {walls[0]}", f"墙 {walls[1]}")
 
     def _idle_label(self, place_mode: bool) -> str:
         """左上角胶囊在"鼠标没指向任何有意思的东西"时显示什么。
 
-        默认的「投子」是四子棋的词 —— 别的棋类自己给一个，不然玩家以为
-        点一下会往下扔东西。
+        三段优先：
+        1. **现在轮不到你**（AI 思考中 / 动画播放中 / 已暂停 / 已终局）→ 直接写原因。
+           否则 AI 回合的胶囊还在教你"点手牌放子"，看着像在暗示你能动手。
+        2. 视图自己的空闲提示 ``idle_hint()`` —— 默认文案不能写某个棋类的词
+           （"投子"是四子棋的），所以由各棋类自己给。
+        3. 兜底一句通用的。
         """
-        if hasattr(self.view, "idle_hint"):
-            return self.view.idle_hint()
-        return "放墙模式" if place_mode else "投子"
+        if place_mode:
+            return "放墙模式"
+        if not self._interactive():
+            reason = self._blocked_reason()
+            if reason:
+                return reason
+        hook = getattr(self.view, "idle_hint", None)
+        if callable(hook):
+            return hook()
+        return "选择落点"
 
     def _hint_text(self) -> str:
         if self.game_key == "connect4":
@@ -819,6 +858,10 @@ class MatchScene:
             return "点己方棋子选组，再点虚线目标格走子"
         if self.game_key == "hive":
             return "点手牌或己方棋子 · 数字键 1-8 选虫种 · 右键取消 · 滚轮缩放、拖画布平移 · F 回正"
+        if self.game_key == "dotsboxes":
+            return "在相邻两点间画边，画满一格即占为己有并再走一手"
+        if self.game_key == "mancala":
+            return "点己方一侧的小坑取种子逐坑播种 · 落己方仓库可再走"
         return "把鼠标移到格子边缘可放墙，移到格子中心可走子"
 
     def _maybe_save(self, dt_ms: float) -> None:

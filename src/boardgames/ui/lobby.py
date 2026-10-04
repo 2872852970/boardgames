@@ -341,6 +341,10 @@ class LobbyScene:
             self._icon_abalone(surface, rect)
         elif kind == "hive":
             self._icon_hive(surface, rect)
+        elif kind == "dotsboxes":
+            self._icon_dotsboxes(surface, rect)
+        elif kind == "mancala":
+            self._icon_mancala(surface, rect)
         else:
             self._icon_dots(surface, rect)
 
@@ -528,6 +532,87 @@ class LobbyScene:
                 pos = (cx + dx * gap - size // 2, cy + dy * gap - size // 2)
                 color = theme.ACCENT if dx == dy else theme.ACCENT_DIM
                 render.rounded_rect(surface, pygame.Rect(pos, (size, size)), color, 3)
+
+    def _icon_dotsboxes(self, surface, rect: pygame.Rect) -> None:
+        """点格棋：4×4 点阵 + 已画的边 + 一个刚被占领的方格。
+
+        画的边用墙金色（与对局里"画边"同色），占领格是琥珀玩家的半透明填充，
+        表达"画满四条边即占格"。
+        """
+        rows = cols = 4
+        pitch = 20
+        cx, cy = rect.centerx, rect.centery
+        left = cx - (cols - 1) * pitch / 2
+        top = cy - (rows - 1) * pitch / 2
+
+        def at(c: int, r: int) -> tuple[float, float]:
+            return (left + c * pitch, top + r * pitch)
+
+        # 占领格（左上 2×2 区域里的一格）：琥珀色半透明
+        bx0, by0 = at(1, 1)
+        box = pygame.Rect(bx0 - pitch / 2, by0 - pitch / 2, pitch, pitch)
+        layer = pygame.Surface((pitch, pitch), pygame.SRCALPHA)
+        pygame.draw.rect(layer, (*theme.PLAYER_COLORS[0], 70), layer.get_rect())
+        surface.blit(layer, box.topleft)
+
+        # 已画的边：围绕占领格的一圈 + 右下一条散边
+        edge_color = theme.WALL_EDGE
+        for (c0, r0, c1, r1) in (
+            (0, 1, 1, 1), (0, 2, 1, 2), (0, 1, 0, 2), (1, 1, 1, 2),
+            (2, 2, 3, 2), (3, 2, 3, 3),
+        ):
+            pygame.draw.line(surface, edge_color, at(c0, r0), at(c1, r1), 3)
+
+        # 点阵
+        for r in range(rows):
+            for c in range(cols):
+                pygame.draw.circle(surface, theme.TEXT_DIM, at(c, r), 3)
+
+    def _icon_mancala(self, surface, rect: pygame.Rect) -> None:
+        """播棋：上排 4 个小坑 + 两端仓库 + 种子圆点。
+
+        上排是玩家 2（蓝）的坑，右下角仓库显示已收的种子 —— 一句话就是
+        "把种子搬进自己仓库"。
+        """
+        cx, cy = rect.centerx, rect.centery
+        pitch = 26
+        pit_r = 10
+        store_r = 16
+
+        # 两端仓库：左蓝右琥珀（对局里玩家 0 在下排靠左，这里用左右区分）
+        left_store = (cx - pitch * 2.2, cy)
+        right_store = (cx + pitch * 2.2, cy)
+        for center, player in ((left_store, 1), (right_store, 0)):
+            layer = pygame.Surface((store_r * 2, store_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(layer, (*theme.PLAYER_COLORS[player], 60),
+                               (store_r, store_r), store_r)
+            surface.blit(layer, (center[0] - store_r, center[1] - store_r))
+            pygame.draw.circle(surface, theme.PLAYER_COLORS[player], center, store_r, 2)
+            # 仓库里的种子
+            pygame.draw.circle(surface, theme.PLAYER_COLORS[player],
+                               (int(center[0]), int(center[1])), 4)
+
+        # 上排 4 个小坑，其中两个有种子
+        seeds_in = {1: 3, 3: 2}
+        for i in range(4):
+            x = cx - pitch * 1.5 + i * pitch
+            y = cy - pitch * 0.9
+            pygame.draw.circle(surface, theme.CELL_ALT, (int(x), int(y)), pit_r)
+            pygame.draw.circle(surface, theme.BORDER, (int(x), int(y)), pit_r, 2)
+            n = seeds_in.get(i, 0)
+            for k in range(n):
+                sx = x + (k - (n - 1) / 2) * 6
+                pygame.draw.circle(surface, theme.WALL, (int(sx), int(y)), 2)
+
+        # 下排 3 个小坑，其中一个有种子
+        for i in range(3):
+            x = cx - pitch + i * pitch
+            y = cy + pitch * 0.9
+            pygame.draw.circle(surface, theme.CELL_ALT, (int(x), int(y)), pit_r)
+            pygame.draw.circle(surface, theme.BORDER, (int(x), int(y)), pit_r, 2)
+            if i == 0:
+                pygame.draw.circle(surface, theme.WALL, (int(x - 3), int(y)), 2)
+                pygame.draw.circle(surface, theme.WALL, (int(x + 3), int(y + 2)), 2)
 
 
 # --------------------------------------------------------------------------- #

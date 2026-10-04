@@ -42,7 +42,6 @@ class QuoridorGame(Game[QuoridorState, Move]):
     settings_map = {
         "board_size": "size",
         "walls_per_player": "walls",
-        "first_player": "first_player",
     }
 
     tagline = "Quoridor · 墙棋"

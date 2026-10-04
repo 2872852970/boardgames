@@ -73,22 +73,15 @@ class GameSession:
         错误混为一谈：参数名写错、和游戏本身不读该参数。实测还导致两个问题：
         设 ``first_player=p2`` 被静默丢弃，以及返回注册表里的**共享单例**
         （跨对局状态污染）。现在改为显式声明，未声明的参数不会被误传。
+
+        **先手固定为玩家 1**（``first_player`` 参数已从设置里去掉）：各棋类的构造器
+        仍保留 ``first_player=0`` 这个显式入口供测试与规则层使用，只是不再由设置驱动。
         """
         cls = type(self.registry.get(self.game_key))
         kwargs: dict[str, Any] = {
             param: self.settings.get(key) for key, param in cls.settings_map.items()
         }
-        if "first_player" in cls.settings_map:
-            kwargs["first_player"] = self._resolve_first_player()
         return cls(**kwargs)
-
-    def _resolve_first_player(self) -> int:
-        choice = self.settings.get("first_player")
-        if choice == "p1":
-            return 0
-        if choice == "p2":
-            return 1
-        return self.rng.randrange(2)
 
     def new_game(self) -> None:
         self.cancel_thinking()

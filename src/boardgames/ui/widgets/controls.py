@@ -10,7 +10,7 @@ import pygame
 from boardgames.ui import render, theme
 from boardgames.ui.animation import ease_out_cubic, lerp
 from boardgames.ui.fonts import FontBook
-from boardgames.ui.widgets.base import ValueWidget, Widget
+from boardgames.ui.widgets.base import RESET_W, ValueWidget, Widget
 
 ROWH = 30
 LABEL_H = 22
@@ -125,8 +125,11 @@ class Slider(ValueWidget):
         *,
         fmt: Callable[[float], str] = _fmt_number,
         on_edit: Callable[[Slider], None] | None = None,
+        default: float | None = None,
+        on_reset: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(key, label, float(value), on_change)
+        super().__init__(key, label, float(value), on_change,
+                         default=default, on_reset=on_reset)
         self.minimum = float(minimum)
         self.maximum = float(maximum)
         self.step = float(step) if step else 0.0
@@ -146,13 +149,24 @@ class Slider(ValueWidget):
 
     @property
     def _track(self) -> pygame.Rect:
-        return pygame.Rect(self.rect.x, self.rect.y + 32, self.rect.width, 6)
+        return pygame.Rect(self.rect.x, self.rect.y + 32, self._track_width, 6)
+
+    @property
+    def _track_width(self) -> int:
+        """滑轨宽度：右端要让出「恢复初始值」那一格。"""
+        return max(40, self.rect.width - (RESET_W if self.supports_reset else 0))
 
     @property
     def value_box(self) -> pygame.Rect:
         """可点击输入的数值框区域。"""
         width = 80
-        return pygame.Rect(self.rect.right - width, self.rect.y - 1, width, 24)
+        right = self.rect.right - (RESET_W if self.supports_reset else 0)
+        return pygame.Rect(right - width, self.rect.y - 1, width, 24)
+
+    @property
+    def _reset_center(self) -> tuple[int, int]:
+        # 和数值框同一行居中：↺ 挨着数值框，而不是压到下面的滑轨上
+        return (self.rect.right - RESET_W // 2 - 2, self.value_box.centery)
 
     def _knob_x(self) -> int:
         span = max(1.0, self.maximum - self.minimum)
@@ -226,6 +240,8 @@ class Slider(ValueWidget):
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not (self.visible and self.enabled):
             return False
+        if self.handle_reset(event):
+            return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.value_box.collidepoint(event.pos):
                 self.begin_edit()
@@ -269,7 +285,7 @@ class Slider(ValueWidget):
         render.text(
             surface,
             label_font,
-            render.truncate(label_font, self.label, max(20, self.rect.width - box.width - 12)),
+            render.truncate(label_font, self.label, max(20, self.rect.width - box.width - RESET_W - 12)),
             (self.rect.x, self.rect.y + 2),
             theme.TEXT_DIM,
         )
@@ -303,6 +319,7 @@ class Slider(ValueWidget):
         pygame.draw.circle(surface, theme.ACCENT if not self._dragging else theme.ACCENT_HOVER,
                            (knob_x, track.centery), radius)
         pygame.draw.circle(surface, theme.BG, (knob_x, track.centery), radius - 3)
+        self.draw_reset(surface)
 
 
 # --------------------------------------------------------------------------- #
@@ -316,8 +333,13 @@ class Toggle(ValueWidget):
         label: str,
         value: bool,
         on_change: Callable[[str, Any], None] | None = None,
+        *,
+        default: bool | None = None,
+        on_reset: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(key, label, bool(value), on_change)
+        super().__init__(key, label, bool(value), on_change,
+                         default=None if default is None else bool(default),
+                         on_reset=on_reset)
         self._anim = 1.0 if value else 0.0
 
     @property
@@ -327,11 +349,18 @@ class Toggle(ValueWidget):
     @property
     def _switch(self) -> pygame.Rect:
         w, h = 42, 22
-        return pygame.Rect(self.rect.right - w, self.rect.y + 8, w, h)
+        right = self.rect.right - (RESET_W if self.supports_reset else 0)
+        return pygame.Rect(right - w, self.rect.y + 8, w, h)
+
+    @property
+    def _reset_center(self) -> tuple[int, int]:
+        return (self.rect.right - RESET_W // 2 - 2, self._switch.centery)
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not (self.visible and self.enabled):
             return False
+        if self.handle_reset(event):
+            return True
         if (
             event.type == pygame.MOUSEBUTTONDOWN
             and event.button == 1
@@ -349,14 +378,19 @@ class Toggle(ValueWidget):
     def draw(self, surface: pygame.Surface, fonts: FontBook) -> None:
         if not self.visible:
             return
-        render.text(surface, fonts.get(14), self.label, (self.rect.x, self.rect.centery), theme.TEXT,
-                    baseline="middle")
         switch = self._switch
+        render.text(
+            surface, fonts.get(14),
+            render.truncate(fonts.get(14), self.label,
+                            max(20, switch.left - self.rect.x - RESET_W - 8)),
+            (self.rect.x, self.rect.centery), theme.TEXT, baseline="middle",
+        )
         t = ease_out_cubic(self._anim)
         bg = theme.mix(theme.PANEL_ALT, theme.ACCENT, t)
         render.rounded_rect(surface, switch, bg, theme.RADIUS_PILL)
         knob_x = int(lerp(switch.x + 11, switch.right - 11, t))
         pygame.draw.circle(surface, (255, 255, 255), (knob_x, switch.centery), 8)
+        self.draw_reset(surface)
 
 
 # --------------------------------------------------------------------------- #
@@ -373,8 +407,10 @@ class Dropdown(ValueWidget):
         on_change: Callable[[str, Any], None] | None = None,
         *,
         labels: dict[str, str] | None = None,
+        default: str | None = None,
+        on_reset: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(key, label, value, on_change)
+        super().__init__(key, label, value, on_change, default=default, on_reset=on_reset)
         self.choices = list(choices)
         self.labels = dict(labels or {})
         self.open = False
@@ -391,18 +427,25 @@ class Dropdown(ValueWidget):
     @property
     def _box(self) -> pygame.Rect:
         top = self.rect.y + (LABEL_H if self.label else 0)
-        return pygame.Rect(self.rect.x, top, self.rect.width, 38)
+        right = self.rect.right - (RESET_W if self.supports_reset else 0)
+        return pygame.Rect(self.rect.x, top, max(40, right - self.rect.x), 38)
+
+    @property
+    def _reset_center(self) -> tuple[int, int]:
+        return (self.rect.right - RESET_W // 2 - 2, self._box.centery)
 
     def _option_rects(self) -> list[pygame.Rect]:
         out = []
-        top = self._box.bottom + 4
+        box = self._box
+        top = box.bottom + 4
         for i in range(len(self.choices)):
-            out.append(pygame.Rect(self.rect.x, top + i * 32, self.rect.width, 30))
+            out.append(pygame.Rect(box.x, top + i * 32, box.width, 30))
         return out
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not (self.visible and self.enabled):
             return False
+        # 展开列表优先接管（点选项 / 点别处 = 收起），此时 ↺ 不参与
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.open:
                 for choice, rect in zip(self.choices, self._option_rects(), strict=True):
@@ -412,6 +455,8 @@ class Dropdown(ValueWidget):
                         return True
                 self.open = False
                 return self._box.collidepoint(event.pos) or True
+            if self.handle_reset(event):
+                return True
             if self._box.collidepoint(event.pos):
                 self.open = True
                 return True
@@ -440,6 +485,7 @@ class Dropdown(ValueWidget):
         arrow = "▲" if self.open else "▼"
         render.text(surface, fonts.get(11), arrow, (box.right - 12, box.centery), theme.TEXT_DIM,
                     align="right", baseline="middle")
+        self.draw_reset(surface)
 
     def draw_overlay(self, surface: pygame.Surface, fonts: FontBook) -> None:
         """展开的列表必须在所有控件之上绘制。"""

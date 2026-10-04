@@ -20,8 +20,8 @@ ParamKind = Literal["int", "float", "bool", "choice", "text"]
 GROUPS: tuple[tuple[str, str], ...] = (
     ("game", "棋局设置"),
     ("players", "对局双方"),
-    ("minimax", "Minimax 参数"),
-    ("mcts", "MCTS 参数"),
+    ("minimax", "Minimax 引擎"),
+    ("mcts", "MCTS 引擎"),
     ("eval", "评估权重"),
     ("ui", "界面与操作"),
 )
@@ -81,6 +81,13 @@ class ParamSpec:
     #: 玩家类型那两项历史上是侧栏里写死的（``spec.key in {"p1_type","p2_type"}``），
     #: 这个字段把同样的能力开放给所有 choice 参数。
     choice_labels: Mapping[str, str] = field(default_factory=dict)
+    #: 校验时**允许存住**的取值（默认 = ``choices``）。
+    #:
+    #: 用它把"界面上不显示的合法值"和"界面候选"分开：``p1_type`` / ``p2_type``
+    #: 的候选只有三种 AI（自对弈里不该出现"人类"），但人机对战必须能把
+    #: ``"human"`` 存进去。少了它，选「我执 玩家 2」会被 ``coerce`` 悄悄改写成
+    #: 默认值 —— 界面选的和真正跑起来的 AI 必然对不上。
+    accepts: tuple[str, ...] = ()
 
     # ---- 校验 / 归一化 ----
 
@@ -99,7 +106,8 @@ class ParamSpec:
                 out = float(value)
             elif self.kind == "choice":
                 text = str(value)
-                return text if text in self.choices else self.default
+                allowed = self.accepts or self.choices
+                return text if text in allowed else self.default
             else:  # text
                 return str(value)
         except (TypeError, ValueError):
@@ -120,6 +128,8 @@ def _specs() -> list[ParamSpec]:
     C4 = ("connect4",)
     A = ("abalone",)
     H = ("hive",)
+    DB = ("dotsboxes",)
+    M = ("mancala",)
     out: list[ParamSpec] = [
         # ---------------- 棋局 ----------------
         ParamSpec("board_size", "棋盘尺寸", "int", 9, 5, 13, 2, group="game",
@@ -135,37 +145,51 @@ def _specs() -> list[ParamSpec]:
                   hint="标准 / 比利时雏菊（攻） / 德国雏菊（守）；切换即开新局"),
         ParamSpec("hive_expansion", "启用扩展虫", "bool", False, group="game",
                   games=H, hint="加瓢虫 / 蚊子 / 鼠妇各一枚；切换即开新局"),
+        ParamSpec("dotsboxes_size", "点阵尺寸", "int", 6, 3, 9, 1, group="game",
+                  games=DB, hint="N×N 个点，形成 (N-1)×(N-1) 个方格；标准为 6"),
+        ParamSpec("mancala_pits", "每侧小坑数", "int", 6, 3, 8, 1, group="game",
+                  games=M, hint="标准 Kalah 为 6 个"),
+        ParamSpec("mancala_seeds", "每坑种子数", "int", 4, 1, 8, 1, group="game",
+                  games=M, hint="标准为 4 枚"),
         ParamSpec("mode", "对局模式", "choice", "pve", choices=MODES, group="game"),
-        ParamSpec("first_player", "先手", "choice", "p1", choices=("p1", "p2", "random"),
-                  group="game", hint="数字版里的「石头剪刀布」",
-                  choice_labels={"p1": "玩家 1 先手", "p2": "玩家 2 先手", "random": "随机"}),
         # ---------------- 双方 ----------------
         # 这两项只在「AI 自对弈」里露出来（人机对战走侧栏的"我执 / 电脑 AI"，
-        # 见 ui/sidebar.py 的 PVE_SIDE_KEY / PVE_AI_KEY），所以默认值和候选里
-        # 都不该出现"人类" —— 自对弈两边都得是 AI。
+        # 见 ui/sidebar.py 的 PVE_SIDE_KEY / PVE_AI_KEY），所以**候选里**不该有
+        # "人类"。但人机对战要把"谁是人类"落盘，所以 ``accepts`` 放宽到全部类型。
         ParamSpec("p1_type", "玩家 1 的 AI", "choice", "minimax", choices=AI_TYPES,
-                  group="players", expose=True),
+                  accepts=PLAYER_TYPES, group="players", expose=True),
         ParamSpec("p2_type", "玩家 2 的 AI", "choice", "mcts", choices=AI_TYPES,
-                  group="players", expose=True),
+                  accepts=PLAYER_TYPES, group="players", expose=True),
         # ---------------- Minimax ----------------
-        ParamSpec("minimax_depth", "搜索深度", "int", 4, 1, 10, 1, group="minimax"),
+        # 引擎参数收在「设置」浮层里（``ui/sidebar.PANEL_GROUPS``），并且只在
+        # **该引擎真的参战**时才显示 —— 所以每个参数都标 ``needs_engine``。
+        # 不标的话：双人对战里会冒出一堆 AI 旋钮，人机 Minimax 里还会多出
+        # 一整套 MCTS 参数（改了完全没用的那种）。
+        ParamSpec("minimax_depth", "搜索深度", "int", 4, 1, 10, 1, group="minimax",
+                  needs_engine="minimax", hint="越大越强也越慢"),
         ParamSpec("minimax_wall_depth", "考虑放墙的层数", "int", 2, 1, 5, 1, group="minimax",
-                  games=Q, hint="越大越强也越慢"),
+                  games=Q, needs_engine="minimax", hint="越大越强也越慢"),
         ParamSpec("minimax_max_branch", "着法候选上限", "int", 12, 0, 40, 1, group="minimax",
-                  games=Q + A + H,
+                  games=Q + A + H, needs_engine="minimax",
                   hint="0 表示不裁剪（很慢）；大力士棋建议 20~32，昆虫棋分支很宽建议 16~32"),
-        ParamSpec("minimax_time_ms", "思考时限 (ms)", "int", 1200, 50, 15000, 50, group="minimax"),
-        ParamSpec("minimax_tt", "启用置换表", "bool", True, group="minimax", advanced=True),
+        ParamSpec("minimax_time_ms", "思考时限 (ms)", "int", 1200, 50, 15000, 50, group="minimax",
+                  needs_engine="minimax"),
+        ParamSpec("minimax_tt", "启用置换表", "bool", True, group="minimax", advanced=True,
+                  needs_engine="minimax"),
         # ---------------- MCTS ----------------
-        ParamSpec("mcts_iterations", "模拟次数", "int", 4000, 50, 200000, 50, group="mcts"),
-        ParamSpec("mcts_c_uct", "探索常数 C", "float", 1.414, 0.1, 4.0, 0.05, group="mcts"),
+        ParamSpec("mcts_iterations", "模拟次数", "int", 4000, 50, 200000, 50, group="mcts",
+                  needs_engine="mcts"),
+        ParamSpec("mcts_c_uct", "探索常数 C", "float", 1.414, 0.1, 4.0, 0.05, group="mcts",
+                  needs_engine="mcts"),
         ParamSpec("mcts_rollout_cap", "Rollout 深度上限", "int", 40, 4, 200, 4, group="mcts",
-                  advanced=True),
+                  advanced=True, needs_engine="mcts"),
         ParamSpec("mcts_max_branch", "着法候选上限", "int", 8, 0, 40, 1, group="mcts",
-                  games=Q + A + H, hint="大力士棋建议 20~32，昆虫棋建议 16~32"),
-        ParamSpec("mcts_time_ms", "思考时限 (ms)", "int", 1200, 50, 15000, 50, group="mcts"),
+                  games=Q + A + H, needs_engine="mcts",
+                  hint="大力士棋建议 20~32，昆虫棋建议 16~32"),
+        ParamSpec("mcts_time_ms", "思考时限 (ms)", "int", 1200, 50, 15000, 50, group="mcts",
+                  needs_engine="mcts"),
         ParamSpec("ai_seed", "随机种子", "int", 0, 0, 10**9, 1, group="mcts", expose=False,
-                  hint="0 表示每次随机；固定种子可复现对局"),
+                  needs_engine="mcts", hint="0 表示每次随机；固定种子可复现对局"),
         # ---------------- 评估权重 ----------------
         ParamSpec("w_path", "最短路径差", "float", 100.0, 0.0, 400.0, 5.0, group="eval",
                   advanced=True, games=Q),
@@ -217,6 +241,18 @@ def _specs() -> list[ParamSpec]:
         ParamSpec("p_hive_place", "Rollout 放置概率", "float", 0.55, 0.0, 1.0, 0.01,
                   group="eval", advanced=True, needs_engine="mcts", games=H,
                   hint="rollout 里优先放新虫的概率；太低会一直搬家不围后"),
+        # 点格棋专属权重
+        ParamSpec("w_dots_material", "占领格数差", "float", 40.0, 0.0, 200.0, 5.0, group="eval",
+                  advanced=True, games=DB, hint="已占领方格数之差"),
+        ParamSpec("w_dots_threat", "封口威胁", "float", 30.0, 0.0, 200.0, 5.0, group="eval",
+                  advanced=True, games=DB, hint="还剩一条边即封口的格子数差"),
+        # 播棋专属权重
+        ParamSpec("w_mancala_store", "仓库种子差", "float", 10.0, 0.0, 100.0, 1.0, group="eval",
+                  advanced=True, games=M, hint="双方仓库里的种子数之差"),
+        ParamSpec("w_mancala_pit", "坑内种子差", "float", 3.0, 0.0, 50.0, 0.5, group="eval",
+                  advanced=True, games=M, hint="己方小坑里的潜在弹药之差"),
+        ParamSpec("w_mancala_turn", "额外回合机会", "float", 6.0, 0.0, 50.0, 0.5, group="eval",
+                  advanced=True, games=M, hint="能触发额外回合的坑数之差"),
         # ---------------- 界面 ----------------
         ParamSpec("frameless_window", "无边框窗口（去掉系统标题栏）", "bool", True,
                   group="ui", hint="改成自绘标题栏；与棋盘 / AI 无关，需要重启程序才生效"),
@@ -227,6 +263,8 @@ def _specs() -> list[ParamSpec]:
                   games=A, hint="整组推进 / 推挤的滑行时长"),
         ParamSpec("hive_anim_ms", "走子动画 (ms)", "int", 260, 0, 1200, 10, group="ui",
                   games=H, hint="沿路径滑行 / 落子的时长"),
+        ParamSpec("mancala_anim_ms", "播种动画 (ms)", "int", 650, 0, 2000, 50, group="ui",
+                  games=M, hint="种子沿路径逐坑飞入的时长"),
         ParamSpec("show_hints", "显示合法落点提示", "bool", True, group="ui"),
         ParamSpec("show_wall_slots", "显示墙槽位", "bool", True, group="ui", games=Q),
         ParamSpec("ai_delay_ms", "AI 落子停顿 (ms)", "int", 120, 0, 3000, 20, group="ui",
@@ -282,6 +320,11 @@ WEIGHT_KEYS: tuple[str, ...] = (
     "w_hive_hand",
     "w_hive_contact",
     "p_hive_place",
+    "w_dots_material",
+    "w_dots_threat",
+    "w_mancala_store",
+    "w_mancala_pit",
+    "w_mancala_turn",
 )
 
 

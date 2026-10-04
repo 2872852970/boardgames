@@ -21,6 +21,9 @@ config/settings.*.tmp
 .workbuddy/artifacts/
 .workbuddy/tmp/
 
+# 一次性脚本 + 离屏截图（out/verify_v3.py 这类自检脚本可以随用随跑，不入库）
+out/
+
 # IDE / OS
 .idea/
 .vscode/

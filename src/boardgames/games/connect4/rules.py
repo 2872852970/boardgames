@@ -40,7 +40,6 @@ class Connect4Game(Game[Connect4State, Move]):
     settings_map = {
         "connect4_cols": "cols",
         "connect4_rows": "rows",
-        "first_player": "first_player",
     }
 
     tagline = "Connect Four · 重力落子"

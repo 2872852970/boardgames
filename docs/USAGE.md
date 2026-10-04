@@ -51,6 +51,8 @@ uv run boardgames --scene match                         # 跳过大厅直接进�
 uv run boardgames --mode eve --p1 mcts --p2 minimax     # AI 自对弈
 uv run boardgames --game connect4 --cols 8 --rows 7     # 自定义四子棋盘
 uv run boardgames --game quoridor --size 11 --walls 15  # 自定义墙棋棋盘
+uv run boardgames --game dotsboxes                      # 点格棋（点阵尺寸在侧栏调 3~9）
+uv run boardgames --game mancala                        # 播棋（坑数/种子数在侧栏调）
 uv run boardgames --window 1000x640                     # 强制窗口尺寸（小屏 / 调试布局）
 uv run boardgames --windowed                            # 用系统标题栏（默认是无边框）
 uv run python scripts/benchmark_ai.py                   # AI 性能基准
@@ -82,6 +84,8 @@ uv run boardgames --offscreen --screenshot c4.png  --game connect4 --scene match
 uv run boardgames --offscreen --screenshot q.png   --game quoridor --scene match --demo 6  --hover wall-h
 uv run boardgames --offscreen --screenshot aba.png --game abalone  --scene match --demo 24 --hover aba-select
 uv run boardgames --mode pvp --offscreen --screenshot hive.png --game hive --scene match --demo 18 --hover hive-place
+uv run boardgames --offscreen --screenshot db.png  --game dotsboxes --scene match --demo 25 --hover dots-edge
+uv run boardgames --offscreen --screenshot mc.png  --game mancala   --scene match --demo 15 --hover mancala-pit
 ```
 
 > 昆虫棋截图**必须加 `--mode pvp`**：落点提示挂在交互态上，配置里若存了 `mode=eve`，
@@ -99,7 +103,7 @@ uv run boardgames --mode pvp --offscreen --screenshot hive.png --game hive --sce
 参数表由 `settings/schema.py` 的 `ParamSpec` 驱动 —— 想加一个可调参数，
 只要在那里加一行；标上 `games=("key",)` 就只在该棋类出现。
 
-其中"改了必须重开一局"的键（棋盘尺寸、每人墙数、起始布局、扩展虫、先手）都注册在
+其中"改了必须重开一局"的键（棋盘尺寸、每人墙数、起始布局、扩展虫、点阵尺寸、播棋坑数/种子）都注册在
 `RESTART_KEYS` 里；对局一旦落子，这些参数在界面上会被锁定（见 [`GAMEPLAY.md`](GAMEPLAY.md) §1）。
 
 ---

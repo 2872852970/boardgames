@@ -266,7 +266,7 @@ def test_sidebar_narrows_on_small_windows(make_window):
 def test_slider_does_not_follow_hover(make_window):
     """回归：不按键时鼠标划过滑块，数值不能变。"""
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = _visible_slider(window, "minimax_depth")
+    slider = _visible_slider(window, "walls_per_player")
     before = slider.value
 
     for x in range(slider.rect.x + 4, slider.rect.right - 2, 12):
@@ -279,7 +279,7 @@ def test_slider_does_not_follow_hover(make_window):
 
 def test_slider_drag_updates_value(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = _visible_slider(window, "minimax_depth")
+    slider = _visible_slider(window, "walls_per_player")
     before = slider.value
 
     pygame.event.post(_press((slider.rect.x + 4, slider.rect.y + 34)))
@@ -296,7 +296,7 @@ def test_slider_drag_updates_value(make_window):
 def test_slider_drag_ends_when_released_outside_sidebar(make_window):
     """回归：在侧栏外松开左键后，滑块不能再跟着鼠标动。"""
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = _visible_slider(window, "minimax_depth")
+    slider = _visible_slider(window, "walls_per_player")
 
     pygame.event.post(_press((slider.rect.x + 4, slider.rect.y + 34)))
     window._handle_events()

@@ -29,6 +29,29 @@
   下限 210px、上限 `area.width - 36`）。旧的固定 210px 会把长提示从两侧截掉，
   看着像"文字跑到屏幕外面去了"。**新棋类的 `hover_hint` 文案尽量 ≤ 20 汉字**。
 
+## 侧栏结构（`ui/sidebar.py`）
+
+- 头部固定（`HEADER_H = 196`，不滚动）：游戏名 + **右侧那行状态**（轮到谁 / 思考中 /
+  结果）+ 副标题 + 模式分段控件 + **两张玩家卡片**（`_players_rect`：颜色点、身份标签、
+  当前棋类的进度数字；轮到谁谁加玩家色描边 + 左侧色条）。
+  进度数字由窗口的 `_player_details()` 按棋类提供。
+- 底栏两行（`FOOTER_H = 108`）：`_footer_rows = (("new_game","undo"), ("pause","step","lobby","settings"))`，
+  按 `visible` 里的 key 铺满整行；「新局」在等宽基础上再乘 1.25 的权重。
+  `_layout_footer()` 在 `layout()` 与 `_draw_footer()` 里各调一次
+  （后者是为了让命中区跟绘制同步）。
+- 滚动区只剩 `game` + 玩家状态行 + `players`，`_flow()` 仍保证 `game` 排第一。
+- 左上角提示胶囊的空闲文案：**轮不到你时先显示 `_blocked_reason()`**（"AI 正在思考…" /
+  "动画播放中…" / "已暂停…"），只有能动手时才走视图的可选钩子 `idle_hint()`；
+  没有钩子的棋类给「选择落点」（**不要**再用"投子" —— 那是四子棋的词）。
+- **模式分段控件也只在开局前可选**（`_mode_widget.enabled = not status.started`），
+  锁定时压一层 `(*BG_ALT, 150)` 蒙版。模式下方 `MODE_HINT_Y = 97` 处**常驻一行 16px 提示**
+  （未开局"三种模式在对局开始后锁定" / 已开局"已开始 · 开新局可改"）——
+  常驻是因为"按状态出现"的文本会让下面的玩家卡片跟着跳。
+  改头部高度记得同步 `HEADER_H`（现在 226，取值为"玩家卡片底 + 分隔线"）。
+- **"我"是哪一方 = `ViewState.pov_player`**（可选字段，`match_scene._pov_player()` 写入：
+  `pve` = 人类那一方，双人 / 自对弈 = `None` 表示跟随当前行动方）。
+  昆虫棋用它把手牌条钉在自己这边（见 `hive.md`）。
+
 ## AI 自对弈的暂停与单步
 
 - `GameSession.new_game()` 在 `mode == "eve"` 时 `paused = True`；
@@ -82,12 +105,35 @@ if move is not None:
 
 ## 「设置」浮层（`ui/settings_panel.py`）
 
-收纳"调一次就不再碰"的参数（`sidebar.PANEL_GROUPS` = `eval` / `ui`），
-侧栏底栏「设置」按钮打开，模态，`Esc` / 点遮罩 / 点 `×` 关。
+收纳"调一次就不再碰"的参数（`sidebar.PANEL_GROUPS` = `minimax` / `mcts` / `eval` / `ui`；
+侧栏只剩 `game` + `players`），侧栏底栏「设置」按钮打开，模态，`Esc` / 点遮罩 / 点 `×` 关。
 
+- **按引擎过滤**：引擎参数都标了 `needs_engine`，浮层按 `player_types` 只列**实际参战**
+  的那一套（双人对战里全不显示）。所以 `show(game_key, player_types)` 拿到的是
+  `session.resolved_player_types()`。
+- **两列排布**：`_assign_columns()` 按"放进当前较矮的那列"贪心分组，再
+  `_content_height()`（取两列最高）→ `_fit_card()`。顺序不能反 —— 卡片高度依赖列归属。
+  两列共用一个 `scroll` 与一个滚动条。
+- **数值框可键入**：`handle_event` 里 KEYDOWN 必须先交给 `self._editing`，
+  否则 Esc 会把浮层关掉、数字根本打不进去（点别处 = 确认并结束输入）。
+- **展开的下拉要最后画**：`_open_dropdowns()` 在事件里优先接管、在绘制里
+  `draw_overlay()` 收尾（当前分组里只有开关 / 滑块，留个兜底）。
+- **卡片尺寸恒定**：`_fit_card()` 只由可用区域决定（`max(260, min(CARD_MAX_H, area.height-48))`），
+  **不再跟着内容缩** —— 折叠一个分组就让卡片、关闭按钮、两列位置全跳一下，观感比"底部留白"糟得多。
+  折叠 / 展开只改 `max_scroll` 与两列的重新分配。
 - 分组标题**可折叠**：`_Group.expanded`，点标题行切换（放在 `_visible_widgets()`
   的筛选里，事件 / 绘制 / 同步全都认它）。箭头用 `render.disclosure_arrow()` ——
   三角形是画的，`▶` 字形在部分中文字体里是缺字（侧栏也改用它了）。
+- **「恢复初始值」**（侧栏与浮层共用，实现在 `widgets/base.py` 的 `ValueWidget`）：
+  `default` + `on_reset` → 行右侧长出 ↺，`has_reset`（值 ≠ 默认）才亮。四个坑：
+  ① 各控件 `handle_event` **必须先调 `handle_reset()`**（滑块的拖拽区盖住整行）；
+  ② 右端元素（`value_box` / `_switch` / `_box`）都要让出 `RESET_W = 26`，与 `has_reset`
+     无关，否则 ↺ 一亮同行元素就左右跳；
+  ③ `reset()` 走完 `on_reset()` 还要 `set_value_silently(default)` 同步自身（`on_reset`
+     只负责写回设置），否则"设置里是 4、界面还写 7、↺ 还亮着"；
+  ④ ↺ 图标**别用 `pygame.draw.arc`**（角度与视觉方向相反，只画出半个圈像乱码），
+     改成采样折线 + 端点切线箭头（同 `disclosure_arrow` 为什么是画的）。
+  浮层右上角「全部恢复默认」只重置 `_widget_applicable` 的项，点完立刻刷新按钮状态。
 - 收起的分组要把控件 `visible=False` **且** `layout(Rect(0, -9000, 0, 0))` 挪出画面：
   只标不可见的话它们还在原坐标上接事件（点空白处会改到看不见的滑块）。
 - 折叠状态**只存实例上**，不要放模块级：模块级会让"某个测试先折叠了 eval"
@@ -117,10 +163,30 @@ if move is not None:
 - 落子/悔棋/新局后局面对象会变，`draw()` 里检测 `_intent_state is not state` 重算悬停意图。
 
 ## 棋盘交互约定（Connect Four / 大力士棋）
-
 - 四子棋：鼠标移到某一列就预览落点，点击投子。
 - 大力士棋：**两段式点击**（点棋子选组 → 点目标格出招），不做拖拽。
   详见 `abalone.md`。
+
+## 棋盘交互约定（点格棋）——"鼠标和线差半格"是怎么根治的
+
+`games/dotsboxes/view.py` 的 `_edge_at` 把整块棋盘按"离哪条边最近"切成 Voronoi：
+
+- 候选只取两条：**最近的水平边**（行 = `_half_up(gy)` 夹紧，列 = `floor(gx)` 夹紧）
+  与**最近的垂直边**（列 = `_half_up(gx)`，行 = `floor(gy)`）—— 水平边的垂直距离
+  只跟行有关、沿边距离只跟列有关，所以两边各自取最近就是全局最近，不必枚举全部边。
+- 距离是**到线段的欧氏距离**（`_segment_distance`：垂直偏离 + 沿边夹紧后的偏离），
+  取小的那条；一样近取水平边，保证交点处结果确定。
+- 棋盘内**处处**能命中（含棋盘外半格余量）→ 没有死区。旧写法是"`round` 取整 +
+  ±0.42 格的窄带"，格心点不动任何东西，玩家就会看到"指着线，亮的是旁边那条"。
+- 未画的边画成**浅色格线轨道**（`_draw_slots`，受 `show_hints` 控制）：
+  高亮落在哪条线上不用猜。画序：格 → 轨道 → 已画的边 → 幽灵 → 点。
+- `_edge_at` 只返回 `(orient, row, col)`，**着法一律由调用方用 `state.current` 造**
+  —— `is_legal` 会校验 `move.player == state.current`，命中函数里塞个写死的
+  `player=0` 会让"轮到玩家 2"时预览永远不亮（真踩过）。
+- 鼠标离开棋盘由场景调可选钩子 `clear_hover()`（`hasattr` 探测），
+  否则幽灵线会一直挂在画面上。
+- `idle_hint()` 给左上角胶囊一句"移到两点之间的格线上"；不实现就会落到
+  通用兜底文案（以前是四子棋的"投子"）。
 
 ## 摄像机（`ui/camera.py`）——无边界棋盘的通用能力
 

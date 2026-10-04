@@ -38,6 +38,13 @@ class ViewState:
     mouse: tuple[int, int] = (0, 0)
     #: 当前可交互的玩家；None 表示不可交互
     interactive_player: int | None = None
+    #: **"我"是哪一方**（视角方），人机对战时 = 人类那一方的玩家索引。
+    #:
+    #: 双人对战 / AI 自对弈为 ``None``，表示"跟随当前行动方"（谁走棋就显示谁的东西）。
+    #: 有了它，视图才能在人机对战里**把手牌条钉在自己这一边** —— 否则轮到 AI 时
+    #: 手牌条会整块切到对手那边，等于把对手的可选棋子和落点提示直接摊开给玩家看。
+    #: 可选字段：不认识它的棋类完全不受影响。
+    pov_player: int | None = None
     #: 是否禁用输入（AI 思考中 / 动画播放中）
     input_locked: bool = False
     #: 棋类自定义的额外状态（例如 ``hover_kind``）

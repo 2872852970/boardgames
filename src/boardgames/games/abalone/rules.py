@@ -120,7 +120,6 @@ class AbaloneGame(Game[AbaloneState, Move]):
 
     settings_map = {
         "abalone_setup": "setup",
-        "first_player": "first_player",
     }
 
     tagline = "Abalone · 推挤棋"

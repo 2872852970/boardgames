@@ -2,20 +2,19 @@
 
 面板结构（自上而下）：
 
-* 固定头部：游戏名 + 对局模式切换 + 回合指示
+* 固定头部：游戏名（右上角是回合 / 结果指示）+ 副标题 + 对局模式切换 +
+  两张**玩家卡片**（颜色、身份、当前棋类的进度数字；轮到谁谁高亮）
 * 可滚动区：**棋局设置**（全局公共选项，永远排第一、对局开始后锁定）、
-  AI 状态行、对局双方、引擎参数（**按当前模式自动精简**）
-* 固定底栏：新局 / 悔棋 /（自对弈时）暂停、单步 / 大厅 / 设置
+  AI 状态行、对局双方
+* 固定底栏（两行）：新局 / 悔棋 ‖ 大厅 / 设置 /（自对弈）暂停 / 单步
 
-「评估权重」「界面与操作」这两组收在 :class:`~boardgames.ui.settings_panel.
-SettingsPanel` 里（底栏「设置」按钮打开）—— 它们是"调一次就不再碰"的参数，
-留在侧栏只会把常用项挤进滚动区。
+**侧栏只放"边下边调"的东西。** 引擎参数（Minimax / MCTS）、评估权重、
+界面与操作都收在 :class:`~boardgames.ui.settings_panel.SettingsPanel` 里
+（底栏「设置」按钮打开）—— 它们是"调一次就不再碰"的参数，留在侧栏只会
+把常用项挤进滚动区，还得来回滚。
 
-「按模式精简」规则：
-
-* 双人对战：只留棋局设置与界面参数，AI 相关分组全部隐藏；
-* 人机 / 自对弈：只显示**实际参战**的引擎参数（Minimax 或 MCTS），
-  以及评估权重（随机走子没有可调项，所以什么都不显示）。
+「按模式精简」规则：双人对战不显示「对局双方」与 AI 状态行；
+人机 / 自对弈只显示**实际参战**的引擎参数（在「设置」浮层里过滤）。
 
 「对局双方」分组按模式换一套控件
 ----------------------------------
@@ -53,16 +52,25 @@ from boardgames.ui.animation import pulse
 from boardgames.ui.fonts import FontBook
 from boardgames.ui.widgets import Button, Dropdown, Segmented, Slider, Toggle, Widget
 
-HEADER_H = 178
-FOOTER_H = 64
+#: 固定头部高度。取值是按"最底下那张玩家卡片 + 分隔线"倒推的，**不要随手调小**：
+#: 头部大小一变，下面的滚动区高度就跟着变，正是用户说的"设置区域反复变化"。
+HEADER_H = 226
+FOOTER_H = 108
 SCROLL_STEP = 56
 
 # 头部各元素的纵向位置（相对面板顶部）
-TITLE_Y = 12
-SUBTITLE_Y = 44
-MODE_Y = 64
-PLAYERS_Y = 112
-PLAYER_ROW_H = 26
+TITLE_Y = 10
+SUBTITLE_Y = 38
+MODE_Y = 58
+#: 模式分段控件下面那一行 16px 的说明位。
+#:
+#: **必须常驻**（未开局 / 已开局只换文案）：它是"开局后模式会锁定"的唯一提示，
+#: 如果按状态出现或消失，下面的玩家卡片就会跟着上下跳 —— 用户明确要求
+#: "各状态的切换不影响设置区域的显示"。
+MODE_HINT_Y = 97
+PLAYERS_Y = 120
+PLAYER_ROW_H = 44
+PLAYER_ROW_GAP = 8
 
 #: 「人机对战」专用的两个**虚拟**控件键。
 #:
@@ -73,31 +81,42 @@ PVE_AI_KEY = "pve_ai"
 
 #: 收进「设置」浮层（:class:`boardgames.ui.settings_panel.SettingsPanel`）的分组。
 #: 这些是"调一次就不再碰"的参数，混在侧栏里只会把常用项挤进滚动区。
-PANEL_GROUPS: frozenset[str] = frozenset({"eval", "ui"})
+#: 引擎参数（``minimax`` / ``mcts``）同理 —— 它们还额外按"哪个引擎真的参战"过滤。
+PANEL_GROUPS: frozenset[str] = frozenset({"minimax", "mcts", "eval", "ui"})
 
 
 def build_widget(spec, value, on_setting, on_edit=None) -> Widget | None:
-    """按 :class:`ParamSpec` 造一个控件（侧栏与「设置」浮层共用）。"""
+    """按 :class:`ParamSpec` 造一个控件（侧栏与「设置」浮层共用）。
+
+    每一项都带 ``default`` / ``on_reset``，于是自动获得行右侧那个 ↺
+    （见 :class:`boardgames.ui.widgets.base.ValueWidget`）——
+    恢复初始值走 ``on_setting``，所以设置会落盘、该重开的局也会重开。
+    """
     # 玩家类型历史上是写死在这里的；其余 choice 参数从 spec.choice_labels 取中文标签
     labels = PLAYER_TYPE_LABELS if spec.key in {"p1_type", "p2_type"} else None
     if labels is None and spec.choice_labels:
         labels = dict(spec.choice_labels)
+    reset_kw = {
+        "default": spec.default,
+        "on_reset": (lambda key=spec.key, fallback=spec.default: on_setting(key, fallback)),
+    }
     if spec.kind == "bool":
-        return Toggle(spec.key, spec.label, bool(value), on_setting)
+        return Toggle(spec.key, spec.label, bool(value), on_setting, **reset_kw)
     if spec.kind == "int":
         return Slider(
             spec.key, spec.label, value,
             spec.minimum or 0, spec.maximum or 0, spec.step or 1,
-            on_setting, fmt=lambda v: str(int(round(v))), on_edit=on_edit,
+            on_setting, fmt=lambda v: str(int(round(v))), on_edit=on_edit, **reset_kw,
         )
     if spec.kind == "float":
         return Slider(
             spec.key, spec.label, value,
             spec.minimum or 0, spec.maximum or 0, spec.step or 0.01,
-            on_setting, fmt=lambda v: f"{v:g}", on_edit=on_edit,
+            on_setting, fmt=lambda v: f"{v:g}", on_edit=on_edit, **reset_kw,
         )
     if spec.kind == "choice":
-        return Dropdown(spec.key, spec.label, value, spec.choices, on_setting, labels=labels)
+        return Dropdown(spec.key, spec.label, value, spec.choices, on_setting,
+                        labels=labels, **reset_kw)
     return None
 
 
@@ -191,7 +210,7 @@ class Sidebar:
             if not spec.expose or spec.key == "mode":
                 continue  # mode 放在固定头部，不参与滚动区
             if spec.group in PANEL_GROUPS:
-                continue  # 不常用参数收进「设置」浮层（ui/settings_panel.py）
+                continue  # 引擎 / 权重 / 界面参数收进「设置」浮层（ui/settings_panel.py）
             widget = build_widget(spec, self.settings.get(spec.key),
                                   self.on_setting, self._begin_edit)
             if widget is not None:
@@ -221,14 +240,28 @@ class Sidebar:
             self._on_mode_change, labels=MODE_LABELS,
         )
 
+        # 底栏分两行：第一行是"这一局"的主操作，第二行是导航与设置。
+        # 一行塞六个按钮在窄侧栏里只能靠缩字号，两行反而更清爽、更好点。
+        # ``row`` 只用于布局，``key`` 仍是稳定标识。
         self.footer_buttons = [
-            Button("新局", lambda: self.on_action("new_game", None), variant="primary"),
+            Button("新局", lambda: self.on_action("new_game", None), variant="primary",
+                   key="new_game"),
             Button("悔棋", lambda: self.on_action("undo", None), key="undo"),
-            Button("单步", lambda: self.on_action("step", None), key="step"),
             Button("暂停", lambda: self.on_action("toggle_pause", None), key="pause"),
+            Button("单步", lambda: self.on_action("step", None), key="step"),
             Button("大厅", lambda: self.on_action("lobby", None), key="lobby"),
             Button("设置", lambda: self.on_action("open_settings", None), key="settings"),
         ]
+        # 第一行里出现的按钮（其余进第二行）；顺序即绘制顺序
+        self._footer_rows: tuple[tuple[str, ...], ...] = (
+            ("new_game", "undo"),
+            ("pause", "step", "lobby", "settings"),
+        )
+
+        # 两个虚拟控件是按**默认值**造出来的，必须马上从 settings 反推一次：
+        # 不然后面用 "我执玩家 1 / 电脑 Minimax" 覆盖掉配置里存的
+        # "我执玩家 2 / 电脑 MCTS"，下拉显示的和真正跑起来的 AI 对不上。
+        self.sync_from_settings()
 
     def _on_mode_change(self, key: str, value) -> None:
         """切模式时把双方类型**顺手修正到该模式说得通的状态**。
@@ -249,6 +282,9 @@ class Sidebar:
             elif p1 == "human" and p2 == "human":
                 self.on_setting("p2_type", AI_TYPES[0])
         self.on_setting(key, value)
+        # 上面可能顺手改写了 p1_type / p2_type（也换了哪套控件可见），
+        # 把全部控件重新同步一次，界面上的值和真正会跑的对局永远一致。
+        self.sync_from_settings()
 
     def _on_pve_change(self, key: str, value) -> None:
         """把"我执 / 电脑 AI"翻译成真正落盘的 ``p1_type`` / ``p2_type``。
@@ -278,6 +314,17 @@ class Sidebar:
             side, ai = "p1", p2 if p2 != "human" else "minimax"
         self._pve_side.set_value_silently(side)
         self._pve_ai.set_value_silently(ai if ai in AI_TYPES else AI_TYPES[0])
+        # 人机对战时把 p1_type / p2_type **归一化**回落盘值，让"界面显示的"和
+        # "真正跑起来的"永远是同一个真相（例如配置里两人都是 AI 时，实际是
+        # 玩家 1 人类 + 玩家 2 的引擎，就把这份组合写回去）。
+        # * ``notify=False``：构造期调用它，不能顺手触发"重开一局"；
+        # * 只在 pve 下做：自对弈需要两边都是 AI，不能写进 "human"。
+        if self._mode() == "pve":
+            try:
+                self.settings.set("p1_type", "human" if side == "p1" else ai, notify=False)
+                self.settings.set("p2_type", ai if side == "p1" else "human", notify=False)
+            except KeyError:  # pragma: no cover - 参数表被裁剪过的极端情况
+                pass
 
     def sync_from_settings(self) -> None:
         for section in self.sections:
@@ -432,15 +479,16 @@ class Sidebar:
         self.rect = pygame.Rect(rect)
         self._content_x = rect.x + theme.PADDING
         self._content_w = rect.width - theme.PADDING * 2
-        #: 双方信息固定在头部，不随滚动移动/隐藏
+        #: 双方信息（玩家卡片）固定在头部，不随滚动移动/隐藏
         self._players_rect = pygame.Rect(
             self._content_x,
             rect.y + PLAYERS_Y,
             self._content_w,
-            PLAYER_ROW_H * 2,
+            PLAYER_ROW_H * 2 + PLAYER_ROW_GAP,
         )
         if self._mode_widget is not None:
             self._mode_widget.layout(self._header_mode_rect())
+        self._layout_footer()
 
     @property
     def viewport(self) -> pygame.Rect:
@@ -509,15 +557,37 @@ class Sidebar:
             return self.footer_buttons
         return [b for b in self.footer_buttons if b.key not in ("pause", "step")]
 
-    def _footer_button_rect(self, index: int, count: int) -> pygame.Rect:
+    def _layout_footer(self) -> None:
+        """底栏两行布局（绘制与命中判定共用）。
+
+        第一行是"这一局"的主操作（新局 / 悔棋），按钮更大；第二行是导航与
+        设置（大厅 / 设置，自对弈再加暂停 / 单步）。按 ``key`` 取按钮，
+        所以隐藏掉「单步 / 暂停」之后剩下的按钮会自动重新铺满整行。
+        """
+        visible = {button.key: button for button in self._visible_footer()}
         gap = 8
-        width = (self._content_w - gap * (count - 1)) // max(1, count)
-        return pygame.Rect(
-            self._content_x + index * (width + gap),
-            self.rect.bottom - FOOTER_H + 14,
-            width,
-            36,
-        )
+        row_h = (40, 34)
+        row_y = (self.rect.bottom - FOOTER_H + 10, self.rect.bottom - FOOTER_H + 58)
+        for row_index, keys in enumerate(self._footer_rows):
+            present = [visible[key] for key in keys if key in visible]
+            if not present:
+                continue
+            width = (self._content_w - gap * (len(present) - 1)) // len(present)
+            # 主操作行给「新局」多一点宽度，它是最常用的按钮
+            weights = [1.25, 1.0] if row_index == 0 and len(present) == 2 else None
+            x = self._content_x
+            if weights is None:
+                for i, button in enumerate(present):
+                    button.layout(pygame.Rect(x + i * (width + gap), row_y[row_index],
+                                              width, row_h[row_index]))
+                continue
+            total = sum(weights)
+            growable = self._content_w - gap * (len(present) - 1)
+            left = 0
+            for button, weight in zip(present, weights, strict=True):
+                w = int(growable * weight / total)
+                button.layout(pygame.Rect(x + left, row_y[row_index], w, row_h[row_index]))
+                left += w + gap
 
     # ------------------------------------------------------------------ #
     # 事件
@@ -589,6 +659,10 @@ class Sidebar:
         locked = self._settings_locked()
         for widget in self._game_widgets():
             widget.enabled = not locked
+        # 三种模式（双人 / 人机 / 自对弈）同理：开局后不许再切 ——
+        # 它决定"这一局谁在跟谁下"，中途改只意味着换一局。
+        if self._mode_widget is not None:
+            self._mode_widget.enabled = not locked
         # 正在编辑的输入框被折叠 / 精简掉时，直接确认收工
         if self._editing is not None and (not self._editing.visible or not self._editing.enabled):
             self._end_editing(commit=True)
@@ -637,7 +711,14 @@ class Sidebar:
         self._draw_turn(surface, fonts)
         if self._mode_widget is not None:
             self._mode_widget.draw(surface, fonts)
-        # 双方信息固定在头部：永远可见，不会被滚动带走
+            if self._settings_locked():
+                # 锁定态压一层底色（与别处被锁的控件一致）—— 一眼看出点不动，
+                # 而不是点了没反应让人以为坏了
+                veil = pygame.Surface(self._mode_widget.rect.size, pygame.SRCALPHA)
+                veil.fill((*theme.BG_ALT, 150))
+                surface.blit(veil, self._mode_widget.rect.topleft)
+        self._draw_mode_hint(surface, fonts)
+        # 玩家卡片固定在头部：永远可见，不会被滚动带走
         self._draw_players(surface, fonts)
         pygame.draw.line(
             surface, theme.BORDER_SOFT,
@@ -645,7 +726,26 @@ class Sidebar:
             (self.rect.right - 12, self.rect.y + HEADER_H - 6),
         )
 
+    def _draw_mode_hint(self, surface: pygame.Surface, fonts: FontBook) -> None:
+        """模式分段控件下面那行说明。
+
+        **这一行始终占位**（`MODE_HINT_Y`），只切换文案与颜色：未开局是"稍后会锁定"
+        的预告，已开局是"已开始 · 开新局可改"的说明。按状态整行出现 / 消失的话，
+        下面的玩家卡片会来回跳 —— 布局稳定性优先。
+        """
+        locked = self._settings_locked()
+        text = "已开始 · 开新局可改" if locked else "三种模式在对局开始后锁定"
+        color = theme.WARN if locked else theme.TEXT_FAINT
+        render.text(surface, fonts.get(11), text,
+                    (self._content_x, self.rect.y + MODE_HINT_Y),
+                    color, baseline="middle")
+
     def _draw_turn(self, surface: pygame.Surface, fonts: FontBook) -> None:
+        """游戏名右侧的那行状态：轮到谁 / 思考中 / 结果。
+
+        "轮到谁"也在玩家卡片上用高亮表达了一次 —— 这里是给"一眼扫过"用的，
+        卡片则负责显示双方的身份与进度。
+        """
         status = self.status
         text = ""
         color = theme.TEXT_DIM
@@ -653,7 +753,7 @@ class Sidebar:
             text = status.winner_text or "对局结束"
             color = theme.WARN
         elif status.paused:
-            text = "已暂停 · 可点「单步」推进" if self._is_eve() else "已暂停"
+            text = "已暂停 · 可点「单步」" if self._is_eve() else "已暂停"
         elif status.current_player is not None:
             name = f"玩家 {status.current_player + 1}"
             color = theme.PLAYER_COLORS[status.current_player]
@@ -662,9 +762,61 @@ class Sidebar:
                 text = f"{name} 思考中{dots}"
             else:
                 text = f"轮到 {name}"
-        render.text(surface, fonts.get(14), text,
-                    (self.rect.right - theme.PADDING, self.rect.y + SUBTITLE_Y + 2),
-                    color, align="right")
+        if text:
+            render.text(surface, fonts.get(13), text,
+                        (self.rect.right - theme.PADDING, self.rect.y + TITLE_Y + 4),
+                        color, align="right")
+
+    def _draw_players(self, surface: pygame.Surface, fonts: FontBook) -> None:
+        """两名玩家的卡片（固定在头部，不参与滚动）。
+
+        每张卡片一行放下三样东西：颜色点 + 「玩家 N」+ 身份标签（左），
+        以及当前棋类的进度数字（右）。轮到谁，谁的卡片就加一圈玩家色描边 +
+        左侧色条 —— 比"在某处写一行小字"更容易一眼看到。
+        """
+        rect = self._players_rect
+        if rect is None:
+            return
+        status = self.status
+        name_font = fonts.get(14)
+        kind_font = fonts.get(12)
+        for player in (0, 1):
+            card = pygame.Rect(
+                rect.x,
+                rect.y + player * (PLAYER_ROW_H + PLAYER_ROW_GAP),
+                rect.width,
+                PLAYER_ROW_H,
+            )
+            color = theme.PLAYER_COLORS[player]
+            active = status.current_player == player and not status.is_over
+            render.rounded_rect(surface, card, theme.PANEL_ALT if active else theme.PANEL,
+                                theme.RADIUS_SM)
+            render.rounded_rect(surface, card, color if active else theme.BORDER_SOFT,
+                                theme.RADIUS_SM, width=1)
+            if active:
+                # 左侧那道色条：不依赖颜色也能看出谁在走
+                render.rounded_rect(
+                    surface, pygame.Rect(card.x + 1, card.y + 1, 3, card.height - 2), color, 2
+                )
+            dot = (card.x + 20, card.centery)
+            pygame.draw.circle(surface, color, dot, 6 if not active else 7)
+            if active:
+                pygame.draw.circle(surface, theme.lighten(color, 0.55), dot, 10, 2)
+            name = f"玩家 {player + 1}"
+            render.text(surface, name_font, name, (card.x + 34, card.centery),
+                        theme.TEXT if active else theme.TEXT_DIM, baseline="middle")
+            # 详情（"占 2 格" / "墙 10"）由窗口按当前棋类填；留空则回退到墙棋的表述
+            detail = status.player_details[player] or f"墙 {status.walls_left[player]}"
+            detail_rect = render.text(surface, fonts.get(12), detail,
+                                      (card.right - 12, card.centery), theme.TEXT_DIM,
+                                      align="right", baseline="middle")
+            kind = status.player_types[player]
+            label = PLAYER_TYPE_LABELS.get(kind, kind)
+            avail = detail_rect.left - (card.x + 34 + name_font.size(name)[0] + 10) - 6
+            if avail > 24:
+                render.text(surface, kind_font, render.truncate(kind_font, label, avail),
+                            (card.x + 34 + name_font.size(name)[0] + 10, card.centery),
+                            theme.TEXT_FAINT, baseline="middle")
 
     def _draw_content(self, surface: pygame.Surface, fonts: FontBook) -> None:
         viewport = self.viewport
@@ -706,27 +858,6 @@ class Sidebar:
         surface.set_clip(previous_clip)
         self._draw_scrollbar(surface, viewport)
 
-    def _draw_players(self, surface: pygame.Surface, fonts: FontBook) -> None:
-        """双方信息（固定在头部，不参与滚动）。"""
-        rect = self._players_rect
-        if rect is None:
-            return
-        status = self.status
-        for player in (0, 1):
-            row = pygame.Rect(rect.x, rect.y + player * PLAYER_ROW_H, rect.width, PLAYER_ROW_H - 2)
-            color = theme.PLAYER_COLORS[player]
-            pygame.draw.circle(surface, color, (row.x + 8, row.centery), 6)
-            if status.current_player == player and not status.is_over:
-                pygame.draw.circle(surface, theme.lighten(color, 0.5), (row.x + 8, row.centery), 9, 2)
-            render.text(surface, fonts.get(13), f"玩家 {player + 1}", (row.x + 22, row.centery),
-                        theme.TEXT, baseline="middle")
-            kind = status.player_types[player]
-            # 详情（"墙 10" / "已落 12 子"）由窗口按当前棋类填；留空则回退到墙棋的表述
-            detail = status.player_details[player] or f"墙 {status.walls_left[player]}"
-            label = f"{PLAYER_TYPE_LABELS.get(kind, kind)} · {detail}"
-            render.text(surface, fonts.get(12), label, (row.right, row.centery), theme.TEXT_DIM,
-                        align="right", baseline="middle")
-
     def _draw_thinking(self, surface: pygame.Surface, fonts: FontBook, viewport: pygame.Rect) -> None:
         rect = self._thinking_rect
         if rect is None or not rect.colliderect(viewport):
@@ -760,12 +891,11 @@ class Sidebar:
     def _draw_footer(self, surface: pygame.Surface, fonts: FontBook) -> None:
         pygame.draw.line(
             surface, theme.BORDER_SOFT,
-            (self.rect.x + 12, self.rect.bottom - FOOTER_H + 6),
-            (self.rect.right - 12, self.rect.bottom - FOOTER_H + 6),
+            (self.rect.x + 12, self.rect.bottom - FOOTER_H + 4),
+            (self.rect.right - 12, self.rect.bottom - FOOTER_H + 4),
         )
-        buttons = self._visible_footer()
-        for i, button in enumerate(buttons):
-            button.layout(self._footer_button_rect(i, len(buttons)))
+        self._layout_footer()
+        for button in self._visible_footer():
             button.draw(surface, fonts)
 
     def _draw_dropdown_overlays(self, surface: pygame.Surface, fonts: FontBook) -> None:

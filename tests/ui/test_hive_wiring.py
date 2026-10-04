@@ -84,7 +84,7 @@ def test_sidebar_shows_hive_only_params(make_window):
     window = _match_window(make_window)
     keys = _applicable_keys(window.sidebar)
     assert "hive_expansion" in keys, "扩展虫开关该出现"
-    assert "first_player" in keys
+    assert "first_player" not in keys, "「先手」已从设置里去掉（统一玩家 1 先手）"
 
 
 def test_settings_panel_shows_hive_weights_and_ui_params(make_window):

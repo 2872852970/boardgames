@@ -554,6 +554,11 @@ class HiveView:
         if not isinstance(state, HiveState) or state.is_terminal():
             return None
         self._sync_state(state)
+        # 人机对战里 AI 回合不该有任何可点的东西 —— 场景那边已经用
+        # `interactive=False` 挡了一道，这里再自洽一道（视图不依赖调用方）。
+        pov = getattr(view, "pov_player", None)
+        if pov is not None and pov != state.current:
+            return None
         player = state.current
 
         # 1) 手牌条
@@ -749,17 +754,21 @@ class HiveView:
         interactive: bool,
     ) -> None:
         self._sync_state(state)
+        self._drop_foreign_selection(view, state)
         self._draw_canvas_bg(surface)
 
+        # 人机对战时手牌条与提示都钉在**我方**（见 _hand_player）：
+        # 轮到 AI 时不能把对手的手牌、可选棋子、落点提示摊开给玩家看。
+        mine = self._hand_player(view) == state.current
         clip = surface.get_clip()
         surface.set_clip(self.canvas)
         try:
             self._draw_cells(surface, state)
-            if interactive:
+            if interactive and mine:
                 self._refresh_if_stale(game, state)
                 self._draw_selection(surface)
             self._draw_pieces(surface, fonts, state)
-            if interactive:
+            if interactive and mine:
                 # 落点提示画在棋子**之上**：棋子贴图比方格大，先画的话
                 # 紧贴邻格的落点会被旁边那枚棋盖掉半边，看着像"这手不能走"。
                 self._draw_hints(surface, state)
@@ -767,8 +776,40 @@ class HiveView:
         finally:
             surface.set_clip(clip)
 
-        self._draw_hand(surface, fonts, state, interactive)
+        self._draw_hand(surface, fonts, state, interactive and mine, view)
         self._draw_scale_chip(surface, fonts)
+
+    def _hand_player(self, view: ViewState) -> int:
+        """手牌条该画谁的手牌。
+
+        * 双人同屏 / AI 自对弈：``view.pov_player is None`` → 跟随当前行动方
+          （谁走棋就显示谁的手牌，轮流交接时看得到对方还剩什么）。
+        * 人机对战：钉在**人类那一方**（``view.pov_player``）。不钉的话轮到 AI 时
+          整个手牌条会切到对手那边，玩家等于免费看到对手的手牌与可落点。
+        """
+        pov = getattr(view, "pov_player", None)
+        if pov is None:
+            return self._state.current if self._state is not None else 0
+        return pov
+
+    def _drop_foreign_selection(self, view: ViewState, state: HiveState) -> None:
+        """视角方不是当前行动方时，清掉残留的选择与落点表。
+
+        否则人类上一手留下的"举着的棋子 + 落点"会在对手回合一帧帧重新亮起来 ——
+        看起来就像在预览对手能走哪。
+        """
+        if getattr(view, "pov_player", None) is None:
+            return
+        if view.pov_player == state.current:
+            return
+        if self._picked is None and self._selected is None and self._carry is None and not self._moves:
+            return
+        self._picked = None
+        self._selected = None
+        self._carry = None
+        self._moves = {}
+        self._carryable = frozenset()
+        self._refreshed = True  # 别让 _refresh_if_stale 又按 state.current 算一遍
 
     def _refresh_if_stale(self, game, state: HiveState) -> None:
         """选择刚变过、落点表还没跟上时补算一次。
@@ -1041,9 +1082,10 @@ class HiveView:
             )
 
     def _draw_hand(
-        self, surface: pygame.Surface, fonts: FontBook, state: HiveState, interactive: bool
+        self, surface: pygame.Surface, fonts: FontBook, state: HiveState,
+        interactive: bool, view: ViewState,
     ) -> None:
-        player = state.current
+        player = self._hand_player(view)
         self._layout_cards(state, player)
 
         render.rounded_rect(
@@ -1054,7 +1096,8 @@ class HiveView:
         )
 
         label_font = fonts.get(12)
-        # 卡片显示的是**当前行动方**的手牌（轮到谁就画谁的）。
+        # 卡片显示的是"我方"的手牌：双人 / 自对弈跟随当前行动方（轮到谁画谁的），
+        # 人机对战钉在人类那一方（见 _hand_player）。
         # 标签放最左边的窄条里，垂直居中 —— 和卡片同高会被卡片整块盖住。
         # 窗口太窄时先让掉它：卡片是唯一能点的地方。
         if self._show_hand_label:

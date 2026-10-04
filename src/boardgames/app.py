@@ -26,17 +26,23 @@ def register_builtin_views(registry: GameRegistry) -> None:
     """把各棋类的棋盘视图挂到注册表上（UI 相关的 import 集中在这里）。"""
     from boardgames.games.abalone.view import make_view as abalone_view
     from boardgames.games.connect4.view import make_view as connect4_view
+    from boardgames.games.dotsboxes.view import make_view as dotsboxes_view
     from boardgames.games.hive.view import make_view as hive_view
+    from boardgames.games.mancala.view import make_view as mancala_view
     from boardgames.games.quoridor.view import make_view
 
     registry.register_view("quoridor", make_view)
     registry.register_view("connect4", connect4_view)
     registry.register_view("abalone", abalone_view)
     registry.register_view("hive", hive_view)
+    registry.register_view("dotsboxes", dotsboxes_view)
+    registry.register_view("mancala", mancala_view)
     _HOVER_SIMS["quoridor"] = _hover_quoridor
     _HOVER_SIMS["connect4"] = _hover_connect4
     _HOVER_SIMS["abalone"] = _hover_abalone
     _HOVER_SIMS["hive"] = _hover_hive
+    _HOVER_SIMS["dotsboxes"] = _hover_dotsboxes
+    _HOVER_SIMS["mancala"] = _hover_mancala
 
 
 def build_registry() -> GameRegistry:
@@ -88,7 +94,7 @@ def _run_until_over(window, timeout_s: float = 180.0) -> None:
 
     session = window.session
     session.paused = False
-    for key in ("anim_ms", "c4_anim_ms", "abalone_anim_ms", "hive_anim_ms"):
+    for key in ("anim_ms", "c4_anim_ms", "abalone_anim_ms", "hive_anim_ms", "mancala_anim_ms"):
         window.settings.set_volatile(key, 0)
 
     started = time.monotonic()
@@ -176,7 +182,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--hover",
         choices=("none", "wall-h", "wall-v", "corner", "cell", "drop", "drop-mid",
-                 "aba-select", "hive-place", "hive-select"),
+                 "aba-select", "hive-place", "hive-select", "dots-edge", "mancala-pit"),
         default="none",
         help="截图时模拟鼠标悬停，用来拍下预览 / 高亮（按棋类分派）",
     )
@@ -382,6 +388,51 @@ def _hover_abalone(window, mode: str) -> None:
     pos = view.cell_center(best.cells[0])
     window.view_state.mouse = pos
     view.handle_click(pos, session.game, state, window.view_state)
+    view.handle_motion(pos, session.game, state, window.view_state)
+
+
+def _hover_dotsboxes(window, mode: str) -> None:
+    """点格棋：把鼠标放到一条还没画的边上，拍下悬停预览。"""
+    from boardgames.games.dotsboxes import heuristic as heu
+
+    session = window.session
+    view = window.view
+    state = session.state
+    # 找一条能封口的边（画面最有代表性），没有就随便挑一条空边
+    closing = None
+    for i, drawn in enumerate(state.h_edges):
+        if not drawn:
+            row, col = divmod(i, state.size - 1)
+            if heu.boxes_closed_by_move(state, 0, row, col):
+                closing = (0, row, col)
+                break
+    if closing is None:
+        for i, drawn in enumerate(state.h_edges):
+            if not drawn:
+                row, col = divmod(i, state.size - 1)
+                closing = (0, row, col)
+                break
+    if closing is None:
+        return
+    orient, row, col = closing
+    a, b = view._edge_segment(orient, row, col)
+    pos = ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2)
+    window.view_state.mouse = pos
+    view.handle_motion(pos, session.game, state, window.view_state)
+
+
+def _hover_mancala(window, mode: str) -> None:
+    """播棋：把鼠标放到己方第一个非空坑上，拍下播种预览。"""
+    session = window.session
+    view = window.view
+    state = session.state
+    moves = session.game.legal_moves(state)
+    if not moves:
+        return
+    pit = moves[0].pit
+    col = view._pit_to_col(state.current, pit)
+    pos = view._pit_center(state.current, col)
+    window.view_state.mouse = pos
     view.handle_motion(pos, session.game, state, window.view_state)
 
 

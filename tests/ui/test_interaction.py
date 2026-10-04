@@ -197,18 +197,18 @@ def test_player_rows_visible_in_pvp_too(make_window):
 
 def test_click_value_box_starts_editing(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
     assert not slider.editing
 
     pygame.event.post(press(slider.value_box.center))
     window._handle_events()
     assert slider.editing
-    assert slider._buffer == "4"  # 进入编辑时带入当前值
+    assert slider._buffer == "10"  # 进入编辑时带入当前值（每人墙数默认 10）
 
 
 def test_type_number_and_confirm(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
 
     pygame.event.post(press(slider.value_box.center))
     window._handle_events()
@@ -218,12 +218,12 @@ def test_type_number_and_confirm(make_window):
 
     assert not slider.editing
     assert slider.value == 7
-    assert window.settings.get("minimax_depth") == 7
+    assert window.settings.get("walls_per_player") == 7
 
 
 def test_escape_cancels_typing(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
     before = slider.value
 
     pygame.event.post(press(slider.value_box.center))
@@ -234,12 +234,12 @@ def test_escape_cancels_typing(make_window):
 
     assert not slider.editing
     assert slider.value == before
-    assert window.settings.get("minimax_depth") == before
+    assert window.settings.get("walls_per_player") == before
 
 
 def test_typed_value_is_clamped_to_spec_range(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
 
     pygame.event.post(press(slider.value_box.center))
     window._handle_events()
@@ -248,12 +248,12 @@ def test_typed_value_is_clamped_to_spec_range(make_window):
     window.sidebar.handle_key(key_event(pygame.K_RETURN))
 
     assert slider.value == slider.maximum
-    assert window.settings.get("minimax_depth") == slider.maximum
+    assert window.settings.get("walls_per_player") == slider.maximum
 
 
 def test_backspace_works(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
 
     pygame.event.post(press(slider.value_box.center))
     window._handle_events()
@@ -267,7 +267,7 @@ def test_backspace_works(make_window):
 def test_hotkeys_are_suppressed_while_editing(make_window):
     """编辑数值时，键盘不能再去触发新局 / 悔棋 / 退出。"""
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
 
     pygame.event.post(press(slider.value_box.center))
     window._handle_events()
@@ -286,7 +286,7 @@ def test_hotkeys_are_suppressed_while_editing(make_window):
 
 def test_clicking_elsewhere_commits_input(make_window):
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
 
     pygame.event.post(press(slider.value_box.center))
     window._handle_events()
@@ -297,14 +297,14 @@ def test_clicking_elsewhere_commits_input(make_window):
     window._handle_events()
 
     assert not slider.editing
-    assert window.settings.get("minimax_depth") == 8
+    assert window.settings.get("walls_per_player") == 8
     assert len(window.session.history) == 1, "结束编辑的这一次点击不应顺手落子"
 
 
 def test_drag_still_works_after_adding_input_box(make_window):
     """加了输入框之后，拖滑轨仍然要正常。"""
     window = make_window(mode="pve", p1_type="human", p2_type="minimax")
-    slider = visible_slider(window, "minimax_depth")
+    slider = visible_slider(window, "walls_per_player")
 
     pygame.event.post(press((slider.rect.x + 4, slider.rect.y + 34)))
     window._handle_events()

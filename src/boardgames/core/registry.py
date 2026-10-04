@@ -57,7 +57,9 @@ def build_default_registry() -> GameRegistry:
     """组装内置游戏。新增棋类在这里挂一行即可。"""
     from boardgames.games.abalone.rules import AbaloneGame
     from boardgames.games.connect4.rules import Connect4Game
+    from boardgames.games.dotsboxes.rules import DotsBoxesGame
     from boardgames.games.hive.rules import HiveGame
+    from boardgames.games.mancala.rules import MancalaGame
     from boardgames.games.quoridor.rules import QuoridorGame
 
     registry = GameRegistry()
@@ -65,4 +67,6 @@ def build_default_registry() -> GameRegistry:
     registry.register(Connect4Game())
     registry.register(AbaloneGame())
     registry.register(HiveGame())
+    registry.register(DotsBoxesGame())
+    registry.register(MancalaGame())
     return registry

@@ -107,7 +107,6 @@ class HiveGame(Game[HiveState, Move]):
 
     settings_map = {
         "hive_expansion": "expansion",
-        "first_player": "first_player",
     }
 
     tagline = "Hive · 无边界蜂巢"
